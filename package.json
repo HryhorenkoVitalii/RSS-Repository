@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n api,ui -c blue,green \"cargo run\" \"wait-on http://127.0.0.1:8080/api/health -t 120000 && npm run dev --prefix frontend\"",
+    "dev:api": "cargo run",
+    "dev:ui": "npm run dev --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "wait-on": "^8.0.1"
+  }
+}
