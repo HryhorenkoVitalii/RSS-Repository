@@ -5,8 +5,12 @@ mod routes;
 mod rss;
 mod scheduler;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;
+use std::time::Duration;
+
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -29,7 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connect_options = SqliteConnectOptions::from_str(&database_url)
         .map_err(|e| format!("invalid DATABASE_URL: {e}"))?
         .create_if_missing(true)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        // Параллель: HTTP + планировщик + несколько poll. WAL + busy_timeout снимают «database is locked».
+        .busy_timeout(Duration::from_secs(15))
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal);
 
     let pool = SqlitePoolOptions::new()
         .max_connections(10)
