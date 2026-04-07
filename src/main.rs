@@ -6,11 +6,13 @@ mod rss;
 mod scheduler;
 
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
 };
+use tokio::sync::Semaphore;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -51,9 +53,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
 
+    let db_write = Arc::new(Semaphore::new(1));
     let state = routes::AppState {
         pool: pool.clone(),
         http: http.clone(),
+        db_write: db_write.clone(),
     };
 
     let app = routes::router(state);
@@ -65,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "listening: GET /feed.xml, JSON under /api/*");
 
-    tokio::spawn(scheduler::run(pool, http));
+    tokio::spawn(scheduler::run(pool, http, db_write));
 
     axum::serve(listener, app).await?;
 

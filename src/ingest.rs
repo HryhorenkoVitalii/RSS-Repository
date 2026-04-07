@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
+use tokio::sync::Semaphore;
 
 use crate::db::{self, Feed};
 use crate::rss::{article_guid, canonical_body, content_hash, fetch_and_parse};
@@ -19,6 +22,7 @@ fn item_display_body(item: &rss::Item) -> String {
 
 /// Fetch feed URL, upsert all items, update feed title and poll metadata.
 pub async fn poll_feed(
+    write_lock: &Semaphore,
     pool: &SqlitePool,
     client: &reqwest::Client,
     feed: &Feed,
@@ -44,6 +48,7 @@ pub async fn poll_feed(
         let published_at = item.pub_date().and_then(parse_pub_date);
 
         db::upsert_article(
+            write_lock,
             pool,
             db::UpsertArticle {
                 feed_id: feed.id,
@@ -59,7 +64,7 @@ pub async fn poll_feed(
         .map_err(|e| e.to_string())?;
     }
 
-    db::update_feed_meta(pool, feed.id, channel_title.as_deref(), now)
+    db::update_feed_meta(write_lock, pool, feed.id, channel_title.as_deref(), now)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -67,14 +72,26 @@ pub async fn poll_feed(
 }
 
 /// Fire-and-forget poll; on failure updates `last_polled_at` so the scheduler can retry.
-pub fn spawn_poll_feed(pool: SqlitePool, client: reqwest::Client, feed: Feed) {
+pub fn spawn_poll_feed(
+    pool: SqlitePool,
+    client: reqwest::Client,
+    db_write: Arc<Semaphore>,
+    feed: Feed,
+) {
     tokio::spawn(async move {
         let fid = feed.id;
-        match poll_feed(&pool, &client, &feed).await {
+        match poll_feed(db_write.as_ref(), &pool, &client, &feed).await {
             Ok(()) => tracing::info!(feed_id = fid, "feed poll ok"),
             Err(e) => {
                 tracing::warn!(feed_id = fid, error = %e, "feed poll failed");
-                let _ = db::update_feed_meta(&pool, fid, None, chrono::Utc::now()).await;
+                let _ = db::update_feed_meta(
+                    db_write.as_ref(),
+                    &pool,
+                    fid,
+                    None,
+                    chrono::Utc::now(),
+                )
+                .await;
             }
         }
     });

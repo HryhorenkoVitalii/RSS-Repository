@@ -2,6 +2,7 @@ mod api;
 mod feed;
 
 use std::env;
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::State;
@@ -12,6 +13,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use sqlx::SqlitePool;
+use tokio::sync::Semaphore;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::db;
@@ -39,6 +41,8 @@ pub(super) fn base_url_from_headers(headers: &axum::http::HeaderMap) -> String {
 pub struct AppState {
     pub pool: SqlitePool,
     pub http: reqwest::Client,
+    /// One writer at a time for SQLite (avoids SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT under concurrent polls).
+    pub db_write: Arc<Semaphore>,
 }
 
 fn cors_layer() -> CorsLayer {
@@ -81,14 +85,22 @@ async fn log_http_request(
         .unwrap_or_else(|| uri.path().to_string());
 
     let pool = state.pool.clone();
+    let db_write = state.db_write.clone();
     let start = std::time::Instant::now();
     let response = next.run(req).await;
     let duration_ms = start.elapsed().as_millis() as i64;
     let status = i64::from(response.status().as_u16());
 
     tokio::spawn(async move {
-        if let Err(e) =
-            db::insert_request_log(&pool, method.as_str(), &path, status, duration_ms).await
+        if let Err(e) = db::insert_request_log(
+            db_write.as_ref(),
+            &pool,
+            method.as_str(),
+            &path,
+            status,
+            duration_ms,
+        )
+        .await
         {
             tracing::warn!(error = %e, "request_log insert failed");
         }

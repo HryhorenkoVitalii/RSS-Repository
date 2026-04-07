@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use tokio::sync::Semaphore;
 
 use crate::error::AppError;
 
@@ -150,10 +151,15 @@ pub async fn get_feed(pool: &SqlitePool, id: i64) -> Result<Option<Feed>, AppErr
 }
 
 pub async fn create_feed(
+    write_lock: &Semaphore,
     pool: &SqlitePool,
     url: &str,
     poll_interval_seconds: i32,
 ) -> Result<i64, AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
     let id = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO feeds (url, poll_interval_seconds)
            VALUES (?, ?)
@@ -167,10 +173,15 @@ pub async fn create_feed(
 }
 
 pub async fn update_feed_interval(
+    write_lock: &Semaphore,
     pool: &SqlitePool,
     id: i64,
     poll_interval_seconds: i32,
 ) -> Result<bool, AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
     let r = sqlx::query(r#"UPDATE feeds SET poll_interval_seconds = ? WHERE id = ?"#)
         .bind(poll_interval_seconds)
         .bind(id)
@@ -180,11 +191,16 @@ pub async fn update_feed_interval(
 }
 
 pub async fn update_feed_meta(
+    write_lock: &Semaphore,
     pool: &SqlitePool,
     id: i64,
     title: Option<&str>,
     last_polled_at: DateTime<Utc>,
 ) -> Result<(), AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
     sqlx::query(r#"UPDATE feeds SET title = COALESCE(?, title), last_polled_at = ? WHERE id = ?"#)
         .bind(title)
         .bind(last_polled_at)
@@ -236,7 +252,15 @@ async fn insert_content_tx(
     .await
 }
 
-pub async fn upsert_article(pool: &SqlitePool, row: UpsertArticle<'_>) -> Result<(), AppError> {
+pub async fn upsert_article(
+    write_lock: &Semaphore,
+    pool: &SqlitePool,
+    row: UpsertArticle<'_>,
+) -> Result<(), AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
     let mut tx = pool.begin().await?;
 
     let existing: Option<(i64, Vec<u8>)> = sqlx::query_as(
@@ -397,12 +421,17 @@ pub async fn list_article_contents(
 
 /// Incoming HTTP request log (timestamp via DB `DEFAULT`).
 pub async fn insert_request_log(
+    write_lock: &Semaphore,
     pool: &SqlitePool,
     method: &str,
     path: &str,
     status_code: i64,
     duration_ms: i64,
 ) -> Result<(), sqlx::Error> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
     sqlx::query(
         r#"INSERT INTO request_log (method, path, status_code, duration_ms) VALUES (?, ?, ?, ?)"#,
     )

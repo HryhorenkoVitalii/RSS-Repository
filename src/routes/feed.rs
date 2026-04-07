@@ -114,7 +114,7 @@ pub async fn rss_feed(
     let single_feed = selected.is_some();
     if wants_refresh(&q.refresh, single_feed) {
         if let Some((_, ref feed)) = selected {
-            poll_feed(&state.pool, &state.http, feed)
+            poll_feed(state.db_write.as_ref(), &state.pool, &state.http, feed)
                 .await
                 .map_err(|e| {
                     tracing::warn!(feed_id = feed.id, error = %e, "rss pre-fetch poll failed");

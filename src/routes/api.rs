@@ -98,7 +98,7 @@ async fn create_feed(
         return Err(AppError::BadRequest("url required".into()));
     }
     let interval = body.poll_interval_seconds.clamp(60, 86_400);
-    let id = db::create_feed(&state.pool, &url, interval).await?;
+    let id = db::create_feed(state.db_write.as_ref(), &state.pool, &url, interval).await?;
     Ok((StatusCode::CREATED, Json(CreateFeedResponse { id })))
 }
 
@@ -116,7 +116,7 @@ async fn update_feed_interval(
         return Err(AppError::NotFound);
     }
     let interval = body.poll_interval_seconds.clamp(60, 86_400);
-    db::update_feed_interval(&state.pool, id, interval).await?;
+    db::update_feed_interval(state.db_write.as_ref(), &state.pool, id, interval).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -249,7 +249,12 @@ async fn poll_feed_now(
     let feed = db::get_feed(&state.pool, id)
         .await?
         .ok_or(AppError::NotFound)?;
-    spawn_poll_feed(state.pool.clone(), state.http.clone(), feed);
+    spawn_poll_feed(
+        state.pool.clone(),
+        state.http.clone(),
+        state.db_write.clone(),
+        feed,
+    );
     Ok((StatusCode::ACCEPTED, Json(Accepted { accepted: true })))
 }
 
@@ -259,8 +264,9 @@ async fn poll_all_feeds(
     let feeds = db::list_feeds(&state.pool).await?;
     let pool = state.pool.clone();
     let client = state.http.clone();
+    let db_write = state.db_write.clone();
     for feed in feeds {
-        spawn_poll_feed(pool.clone(), client.clone(), feed);
+        spawn_poll_feed(pool.clone(), client.clone(), db_write.clone(), feed);
     }
     Ok((StatusCode::ACCEPTED, Json(Accepted { accepted: true })))
 }
