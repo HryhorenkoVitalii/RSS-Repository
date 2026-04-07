@@ -72,7 +72,7 @@ cd frontend && npm install && npm run build
 |-----------|------|
 | **nginx** | Слушает **8080** (единая точка входа): отдаёт SPA из `frontend/dist`, проксирует `/api/` и `/feed.xml` на бекенд. |
 | **rss-repository** | Слушает только **127.0.0.1:7878** внутри контейнера (не публикуется наружу). |
-| **Volume `/data`** | Здесь лежит SQLite по умолчанию: `DATABASE_URL=sqlite:/data/rss_repository.db`. |
+| **Каталог `/data`** | В контейнере здесь SQLite: `DATABASE_URL=sqlite:/data/rss_repository.db`. На хост этот путь монтируется **bind mount**’ом — файл БД живёт **вне** слоя контейнера и не пропадает при `podman rm` / новом образе. |
 
 ### Одна команда
 
@@ -81,24 +81,42 @@ chmod +x scripts/podman-run.sh
 ./scripts/podman-run.sh
 ```
 
-Открой **http://127.0.0.1:8080**. Данные БД сохраняются в именованном volume **`rss-repository-data`** (можно переопределить переменной **`VOLUME`**).
+Открой **http://127.0.0.1:8080**. База создаётся на **хосте** в каталоге **`data/`** в корне репозитория (файл **`data/rss_repository.db`**). Перезапуск или пересборка контейнера данные не стирает, пока не удалишь этот каталог.
+
+Переопределить путь на хосте:
+
+```bash
+HOST_DATA_DIR=/var/lib/rss-repo ./scripts/podman-run.sh
+```
 
 Скрипт поддерживает:
 
 | Переменная | Пример | Назначение |
 |------------|--------|------------|
+| `HOST_DATA_DIR` | `/var/lib/rss` | Каталог **на хосте** → монтируется в `/data` внутри контейнера (по умолчанию `<корень репо>/data`) |
 | `PORT` | `9000` | Проброс хоста → контейнер `:8080` (`-p $PORT:8080`) |
 | `PUBLIC_BASE_URL` | `https://rss.example.org` | База для ссылок в теле `/feed.xml` (читалки и пункты RSS) |
-| `VOLUME` | `my-rss-data` | Имя volume для `/data` |
 | `IMAGE` | `rss-repository` | Тег образа |
 | `PODMAN` | `docker` | Запуск через Docker вместо Podman |
 
 ### Вручную
 
+**Рекомендуется bind mount** (файл БД сразу на диске хоста):
+
 ```bash
+mkdir -p ./data
 podman build -t rss-repository -f Containerfile .
 # или: docker build -t rss-repository -f Containerfile .
 
+podman run --rm -p 8080:8080 \
+  -e PUBLIC_BASE_URL=http://127.0.0.1:8080 \
+  -v "$(pwd)/data:/data" \
+  rss-repository
+```
+
+Альтернатива — **именованный volume** Podman/Docker (данные тоже переживают перезапуск контейнера, но лежат в хранилище движка, не в явной папке проекта):
+
+```bash
 podman run --rm -p 8080:8080 \
   -e PUBLIC_BASE_URL=http://127.0.0.1:8080 \
   -v rss-repository-data:/data \
