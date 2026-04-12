@@ -5,19 +5,16 @@ import {
   listFeedsPage,
   pollAllFeeds,
   pollFeedNow,
-  subscribePollEvents,
   updateFeedInterval,
   type Feed,
   type FeedsResponse,
-  type PollEvent,
 } from '../api';
 import { formatDateTime } from '../formatTime';
 import { singleFeedRssAbsoluteUrl, singleFeedRssPath } from '../feedRss';
 import { IntervalSelect, snapToNearestPreset } from '../IntervalSelect';
 import { PaginationBar } from '../PaginationBar';
 import { runTracked } from '../runTracked';
-
-type PollStatus = 'idle' | 'polling' | 'success' | 'error';
+import { usePoll, type PollStatus } from '../PollContext';
 
 export function FeedsPage() {
   const [page, setPage] = useState(0);
@@ -28,9 +25,14 @@ export function FeedsPage() {
   const [newUrl, setNewUrl] = useState('');
   const [newInterval, setNewInterval] = useState(600);
 
-  const [pollStatuses, setPollStatuses] = useState<Record<number, PollStatus>>({});
-  const [pollAllStatus, setPollAllStatus] = useState<PollStatus>('idle');
-  const pendingPollIds = useRef(new Set<number>());
+  const {
+    pollStatuses,
+    pollAllStatus,
+    setPollStatus,
+    startPollAll,
+    addPendingPoll,
+    setFeedNames,
+  } = usePoll();
 
   const load = useCallback(async () => {
     setErr(null);
@@ -47,35 +49,32 @@ export function FeedsPage() {
     void load();
   }, [load]);
 
+  // Keep feed names in sync for toast messages
+  const prevFeedsRef = useRef<string>('');
   useEffect(() => {
-    const unsub = subscribePollEvents(
-      (evt: PollEvent) => {
-        const status: PollStatus = evt.ok ? 'success' : 'error';
-        setPollStatuses((prev) => ({ ...prev, [evt.feed_id]: status }));
-        if (!evt.ok && evt.error) {
-          setErr((prev) => (prev ? prev + '\n' : '') + `#${evt.feed_id}: ${evt.error}`);
-        }
+    if (!data) return;
+    const names: Record<number, string> = {};
+    for (const f of data.feeds) {
+      names[f.id] = f.title?.trim() || f.url;
+    }
+    const key = JSON.stringify(names);
+    if (key !== prevFeedsRef.current) {
+      prevFeedsRef.current = key;
+      setFeedNames(names);
+    }
+  }, [data, setFeedNames]);
 
-        pendingPollIds.current.delete(evt.feed_id);
-        if (pendingPollIds.current.size === 0) {
-          setPollAllStatus((s) => (s === 'polling' ? 'idle' : s));
-        }
-
-        setTimeout(() => {
-          setPollStatuses((prev) => {
-            if (prev[evt.feed_id] !== status) return prev;
-            const next = { ...prev };
-            delete next[evt.feed_id];
-            return next;
-          });
-        }, 3000);
-
-        void load();
-      },
-      () => {},
-    );
-    return unsub;
-  }, [load]);
+  // Reload feed list when a poll completes
+  useEffect(() => {
+    const feedIds = data?.feeds.map((f) => f.id) ?? [];
+    const hasFinished = feedIds.some((id) => {
+      const s = pollStatuses[id];
+      return s === 'success' || s === 'error';
+    });
+    if (hasFinished) {
+      void load();
+    }
+  }, [pollStatuses, data, load]);
 
   const totalPages =
     data && data.limit > 0 ? Math.ceil(data.total / data.limit) : 1;
@@ -105,36 +104,23 @@ export function FeedsPage() {
   }
 
   async function onPollOne(id: number) {
-    setPollStatuses((prev) => ({ ...prev, [id]: 'polling' }));
-    pendingPollIds.current.add(id);
+    addPendingPoll(id);
     try {
       await pollFeedNow(id);
     } catch (e) {
-      setPollStatuses((prev) => ({ ...prev, [id]: 'error' }));
-      pendingPollIds.current.delete(id);
+      setPollStatus(id, 'error');
       setErr(e instanceof Error ? e.message : String(e));
-      setTimeout(() => {
-        setPollStatuses((prev) => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-      }, 3000);
+      setTimeout(() => setPollStatus(id, 'idle'), 3000);
     }
   }
 
   async function onPollAll() {
     if (!data) return;
-    setPollAllStatus('polling');
-    for (const f of data.feeds) {
-      setPollStatuses((prev) => ({ ...prev, [f.id]: 'polling' }));
-      pendingPollIds.current.add(f.id);
-    }
+    const ids = data.feeds.map((f) => f.id);
+    startPollAll(ids);
     try {
       await pollAllFeeds();
     } catch (e) {
-      setPollAllStatus('error');
-      setTimeout(() => setPollAllStatus('idle'), 3000);
       setErr(e instanceof Error ? e.message : String(e));
     }
   }
@@ -150,7 +136,7 @@ export function FeedsPage() {
 
   const pollAllLabel =
     pollAllStatus === 'polling'
-      ? 'Polling…'
+      ? 'Polling\u2026'
       : pollAllStatus === 'success'
         ? 'Done!'
         : pollAllStatus === 'error'
@@ -200,7 +186,7 @@ export function FeedsPage() {
         </div>
 
         {!data ? (
-          <p className="muted">Loading…</p>
+          <p className="muted">Loading\u2026</p>
         ) : (
           <>
             {data.feeds.length === 0 ? (
@@ -277,7 +263,7 @@ function FeedCard({
 
   const statusIndicator =
     pollStatus === 'polling' ? (
-      <span className="poll-badge poll-badge--loading">Polling…</span>
+      <span className="poll-badge poll-badge--loading">Polling\u2026</span>
     ) : pollStatus === 'success' ? (
       <span className="poll-badge poll-badge--success">OK</span>
     ) : pollStatus === 'error' ? (
@@ -306,7 +292,7 @@ function FeedCard({
           onClick={onDelete}
           title="Delete feed"
         >
-          ✕
+          \u2715
         </button>
       </div>
       <div className="feed-card-footer">
@@ -331,7 +317,7 @@ function FeedCard({
             disabled={disabled || pollStatus === 'polling'}
             onClick={onPoll}
           >
-            {pollStatus === 'polling' ? 'Polling…' : 'Poll'}
+            {pollStatus === 'polling' ? 'Polling\u2026' : 'Poll'}
           </button>
           <a
             href={rssPath}

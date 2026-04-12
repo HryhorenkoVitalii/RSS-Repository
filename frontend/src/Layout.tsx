@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { setApiKey } from './api';
+import { PollProvider } from './PollContext';
+import { Toasts } from './Toasts';
 
 function ApiKeyButton() {
   const [open, setOpen] = useState(false);
@@ -55,7 +57,7 @@ function ApiKeyButton() {
 
 export function Layout() {
   return (
-    <>
+    <PollProvider>
       <header className="header">
         <h1>RSS Repository</h1>
         <nav className="header-nav">
@@ -71,6 +73,7 @@ export function Layout() {
       <main>
         <Outlet />
       </main>
-    </>
+      <Toasts />
+    </PollProvider>
   );
 }
