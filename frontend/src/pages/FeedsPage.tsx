@@ -9,7 +9,7 @@ import {
   type FeedsResponse,
 } from '../api';
 import { formatDateTime } from '../formatTime';
-import { feedRssAbsoluteUrl, feedRssPath } from '../feedRss';
+import { singleFeedRssAbsoluteUrl, singleFeedRssPath } from '../feedRss';
 import { IntervalSelect, snapToNearestPreset } from '../IntervalSelect';
 import { PaginationBar } from '../PaginationBar';
 import { runTracked } from '../runTracked';
@@ -179,8 +179,8 @@ function FeedRow({
   onSaveInterval: (sec: number) => void;
   onPoll: () => void;
 }) {
-  const rssPath = feedRssPath(feed.id);
-  const rssAbsoluteUrl = feedRssAbsoluteUrl(feed.id);
+  const rssPath = singleFeedRssPath(feed.id);
+  const rssAbsoluteUrl = singleFeedRssAbsoluteUrl(feed.id);
 
   const [sec, setSec] = useState(() =>
     snapToNearestPreset(feed.poll_interval_seconds),

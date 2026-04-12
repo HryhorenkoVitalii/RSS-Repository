@@ -333,7 +333,7 @@ pub async fn upsert_article(
 
 #[derive(Debug, Clone, Default)]
 pub struct ArticleFilter {
-    pub feed_id: Option<i64>,
+    pub feed_ids: Vec<i64>,
     pub only_modified: bool,
     pub last_fetched_from: Option<DateTime<Utc>>,
     /// Exclusive upper bound (start of day after `date_to`).
@@ -342,9 +342,18 @@ pub struct ArticleFilter {
 
 fn push_article_where(b: &mut QueryBuilder<'_, Sqlite>, f: &ArticleFilter) {
     b.push(" WHERE 1=1");
-    if let Some(fid) = f.feed_id {
-        b.push(" AND a.feed_id = ");
-        b.push_bind(fid);
+    if !f.feed_ids.is_empty() {
+        if f.feed_ids.len() == 1 {
+            b.push(" AND a.feed_id = ");
+            b.push_bind(f.feed_ids[0]);
+        } else {
+            b.push(" AND a.feed_id IN (");
+            let mut sep = b.separated(", ");
+            for &fid in &f.feed_ids {
+                sep.push_bind(fid);
+            }
+            sep.push_unseparated(")");
+        }
     }
     if f.only_modified {
         b.push(" AND (SELECT COUNT(*) FROM article_contents c WHERE c.article_id = a.id) > 1");

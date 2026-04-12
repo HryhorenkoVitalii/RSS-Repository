@@ -168,8 +168,15 @@ struct ArticlesResponse {
     limit: i64,
 }
 
+fn parse_feed_ids(raw: &Option<String>) -> Vec<i64> {
+    match raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.split(',').filter_map(|t| t.trim().parse::<i64>().ok()).collect(),
+        None => Vec::new(),
+    }
+}
+
 fn article_filter_from_query(q: &ArticlesQuery) -> Result<ArticleFilter, AppError> {
-    let feed_id = q.feed_id.as_ref().and_then(|s| s.parse::<i64>().ok());
+    let feed_ids = parse_feed_ids(&q.feed_id);
     let only_modified = matches!(q.modified_only.as_deref(), Some("true" | "on" | "1"));
     let last_fetched_from = match q.date_from.as_deref() {
         Some(s) => parse_date_from_day(s)?,
@@ -187,7 +194,7 @@ fn article_filter_from_query(q: &ArticlesQuery) -> Result<ArticleFilter, AppErro
         }
     }
     Ok(ArticleFilter {
-        feed_id,
+        feed_ids,
         only_modified,
         last_fetched_from,
         last_fetched_before,

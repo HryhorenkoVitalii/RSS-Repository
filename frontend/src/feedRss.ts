@@ -1,9 +1,32 @@
-/** Relative URL; in dev Vite proxies `/feed.xml` to the API. */
-export function feedRssPath(feedId: number): string {
-  return `/feed.xml?${new URLSearchParams({ feed_id: String(feedId) })}`;
+export type RssExportParams = {
+  feedIds?: number[];
+  modifiedOnly?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+export function feedRssPath(params: RssExportParams): string {
+  const q = new URLSearchParams();
+  if (params.feedIds && params.feedIds.length > 0) {
+    q.set('feed_id', params.feedIds.join(','));
+  }
+  if (params.modifiedOnly) q.set('modified_only', 'true');
+  if (params.dateFrom) q.set('date_from', params.dateFrom);
+  if (params.dateTo) q.set('date_to', params.dateTo);
+  q.set('refresh', 'false');
+  const qs = q.toString();
+  return qs ? `/feed.xml?${qs}` : '/feed.xml';
 }
 
-/** Absolute URL for copying (same host as this page). */
-export function feedRssAbsoluteUrl(feedId: number): string {
-  return `${window.location.origin}${feedRssPath(feedId)}`;
+export function feedRssAbsoluteUrl(params: RssExportParams): string {
+  return `${window.location.origin}${feedRssPath(params)}`;
+}
+
+/** Legacy single-feed shortcut used by FeedsPage. */
+export function singleFeedRssPath(feedId: number): string {
+  return feedRssPath({ feedIds: [feedId] });
+}
+
+export function singleFeedRssAbsoluteUrl(feedId: number): string {
+  return `${window.location.origin}${singleFeedRssPath(feedId)}`;
 }

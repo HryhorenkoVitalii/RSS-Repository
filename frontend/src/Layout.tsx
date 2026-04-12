@@ -12,9 +12,6 @@ export function Layout() {
           <NavLink className="nav-link" to="/articles">
             Articles
           </NavLink>
-          <a className="nav-link" href="/feed.xml" target="_blank" rel="noreferrer">
-            RSS
-          </a>
         </nav>
       </header>
       <main>

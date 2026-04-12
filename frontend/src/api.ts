@@ -172,7 +172,7 @@ function normalizeArticles(raw: unknown): ArticlesResponse {
 }
 
 export type ListArticlesParams = {
-  feedId?: string;
+  feedIds?: string[];
   modifiedOnly?: boolean;
   page?: number;
   dateFrom?: string;
@@ -183,7 +183,8 @@ export async function listArticles(
   params: ListArticlesParams,
 ): Promise<ArticlesResponse> {
   const q = new URLSearchParams();
-  if (params.feedId) q.set('feed_id', params.feedId);
+  if (params.feedIds && params.feedIds.length > 0)
+    q.set('feed_id', params.feedIds.join(','));
   if (params.modifiedOnly) q.set('modified_only', 'true');
   if (params.page != null && params.page > 0)
     q.set('page', String(params.page));
