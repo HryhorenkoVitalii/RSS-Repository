@@ -1,6 +1,20 @@
 const API_PREFIX = '/api';
 
-async function readJson<T>(path: string, res: Response, text: string): Promise<T> {
+function getApiKey(): string | null {
+  return localStorage.getItem('rss_api_key');
+}
+
+export function setApiKey(key: string | null) {
+  if (key) localStorage.setItem('rss_api_key', key);
+  else localStorage.removeItem('rss_api_key');
+}
+
+function authHeaders(): Record<string, string> {
+  const key = getApiKey();
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+async function readJson<T>(_path: string, res: Response, text: string): Promise<T> {
   if (res.ok && text.trim() === '') {
     return undefined as T;
   }
@@ -8,9 +22,7 @@ async function readJson<T>(path: string, res: Response, text: string): Promise<T
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(
-      `Expected JSON from ${API_PREFIX}${path}. Is the API on :8080? Got: ${text.slice(0, 200)}`,
-    );
+    throw new Error(`Unexpected response from server`);
   }
   if (!res.ok) {
     const msg =
@@ -26,24 +38,25 @@ async function readJson<T>(path: string, res: Response, text: string): Promise<T
 }
 
 async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_PREFIX}${path}`);
-  const text = await res.text();
-  return readJson<T>(path, res, text);
-}
-
-async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_PREFIX}${path}`, {
-    method: 'POST',
-    headers:
-      body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const res = await fetch(`${API_PREFIX}${path}`, { headers: authHeaders() });
   const text = await res.text();
   return readJson<T>(path, res, text);
 }
 
 async function apiDelete<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_PREFIX}${path}`, { method: 'DELETE' });
+  const res = await fetch(`${API_PREFIX}${path}`, { method: 'DELETE', headers: authHeaders() });
+  const text = await res.text();
+  return readJson<T>(path, res, text);
+}
+
+async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { ...authHeaders() };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    method: 'POST',
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
   const text = await res.text();
   return readJson<T>(path, res, text);
 }
@@ -119,29 +132,35 @@ export async function updateFeedInterval(
 }
 
 export async function pollFeedNow(id: number): Promise<void> {
-  const res = await fetch(`${API_PREFIX}/feeds/${id}/poll`, { method: 'POST' });
+  const res = await fetch(`${API_PREFIX}/feeds/${id}/poll`, { method: 'POST', headers: authHeaders() });
   if (!res.ok) throw new Error(`poll request failed: ${res.status}`);
 }
 
 export async function pollAllFeeds(): Promise<void> {
-  const res = await fetch(`${API_PREFIX}/feeds/poll-all`, { method: 'POST' });
+  const res = await fetch(`${API_PREFIX}/feeds/poll-all`, { method: 'POST', headers: authHeaders() });
   if (!res.ok) throw new Error(`poll-all request failed: ${res.status}`);
 }
 
-export type PollEvent = { feed_id: number; ok: boolean; error?: string };
+export type PollEvent = {
+  feed_id: number;
+  ok: boolean;
+  error?: string;
+};
 
 export function subscribePollEvents(
   onEvent: (evt: PollEvent) => void,
   onError?: () => void,
 ): () => void {
-  const es = new EventSource(`${API_PREFIX}/feeds/events`);
+  const key = getApiKey();
+  const sseUrl = key
+    ? `${API_PREFIX}/feeds/events?token=${encodeURIComponent(key)}`
+    : `${API_PREFIX}/feeds/events`;
+  const es = new EventSource(sseUrl);
   es.addEventListener('poll_result', (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data) as PollEvent;
       onEvent(data);
-    } catch {
-      /* ignore malformed */
-    }
+    } catch { /* ignore malformed */ }
   });
   es.onerror = () => onError?.();
   return () => es.close();

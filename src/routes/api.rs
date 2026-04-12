@@ -17,6 +17,7 @@ use crate::db::{
 };
 use crate::error::AppError;
 use crate::ingest::poll_feed;
+use crate::rss::validate_feed_url;
 
 use super::{AppState, PollEvent};
 
@@ -106,6 +107,7 @@ async fn create_feed(
     if url.is_empty() {
         return Err(AppError::BadRequest("url required".into()));
     }
+    validate_feed_url(&url).map_err(|e| AppError::BadRequest(format!("invalid feed url: {e}")))?;
     let interval = body.poll_interval_seconds.clamp(60, 86_400);
     let id = db::create_feed(state.db_write.as_ref(), &state.pool, &url, interval).await?;
     Ok((StatusCode::CREATED, Json(CreateFeedResponse { id })))
@@ -196,6 +198,9 @@ fn parse_feed_ids(raw: &Option<String>) -> Vec<i64> {
 
 fn article_filter_from_query(q: &ArticlesQuery) -> Result<ArticleFilter, AppError> {
     let feed_ids = parse_feed_ids(&q.feed_id);
+    if feed_ids.len() > MAX_FEED_IDS {
+        return Err(AppError::BadRequest(format!("too many feed_id values (max {MAX_FEED_IDS})")));
+    }
     let only_modified = matches!(q.modified_only.as_deref(), Some("true" | "on" | "1"));
     let last_fetched_from = match q.date_from.as_deref() {
         Some(s) => parse_date_from_day(s)?,
@@ -281,9 +286,15 @@ async fn poll_events_sse(
     )
 }
 
+const MAX_FEED_IDS: usize = 50;
+
 fn spawn_poll_and_notify(state: AppState, feed: Feed) {
     tokio::spawn(async move {
         let feed_id = feed.id;
+        let _permit = match state.poll_semaphore.acquire().await {
+            Ok(p) => p,
+            Err(_) => return,
+        };
         let event = match poll_feed(state.db_write.as_ref(), &state.pool, &state.http, &feed).await
         {
             Ok(()) => PollEvent {
@@ -296,7 +307,7 @@ fn spawn_poll_and_notify(state: AppState, feed: Feed) {
                 PollEvent {
                     feed_id,
                     ok: false,
-                    error: Some(e),
+                    error: Some("poll failed".to_string()),
                 }
             }
         };

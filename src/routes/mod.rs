@@ -7,9 +7,9 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::header;
-use axum::http::{HeaderValue, Method, Request};
+use axum::http::{HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use sqlx::SqlitePool;
@@ -54,11 +54,13 @@ pub struct AppState {
     pub poll_events: Arc<broadcast::Sender<PollEvent>>,
     /// Global concurrency limiter for poll operations (API + scheduler).
     pub poll_semaphore: Arc<Semaphore>,
+    /// Optional API key; if set, every request must provide it via `Authorization: Bearer <key>`.
+    pub api_key: Option<Arc<str>>,
 }
 
 fn cors_layer() -> CorsLayer {
     let layer = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers(Any);
     if let Ok(s) = env::var("FRONTEND_ORIGIN") {
         let s = s.trim();
@@ -71,10 +73,69 @@ fn cors_layer() -> CorsLayer {
     layer.allow_origin(AllowOrigin::any())
 }
 
+async fn require_api_key(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let key = match &state.api_key {
+        Some(k) => k,
+        None => return next.run(req).await,
+    };
+    let path = req.uri().path();
+    if path == "/api/health" {
+        return next.run(req).await;
+    }
+
+    let auth = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    let provided = auth
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.trim())
+        .or_else(|| {
+            req.uri()
+                .query()
+                .and_then(|q| {
+                    q.split('&')
+                        .find_map(|pair| pair.strip_prefix("token="))
+                })
+        });
+
+    match provided {
+        Some(tok) if tok == key.as_ref() => next.run(req).await,
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            "unauthorized",
+        )
+            .into_response(),
+    }
+}
+
+async fn security_headers(req: Request<Body>, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    h.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    h.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
+    h.insert(
+        "Permissions-Policy",
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    res
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api", api::routes())
         .route("/feed.xml", get(feed::rss_feed))
+        .layer(middleware::from_fn(security_headers))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_api_key,
+        ))
         .layer(cors_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),

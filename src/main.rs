@@ -21,8 +21,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
         Ok(f) => f,
         Err(err) => {
-            eprintln!("RUST_LOG is invalid ({err}); using default info,rss_repository=debug");
-            tracing_subscriber::EnvFilter::new("info,rss_repository=debug")
+            eprintln!("RUST_LOG is invalid ({err}); using default info");
+            tracing_subscriber::EnvFilter::new("info,rss_repository=info")
         }
     };
     tracing_subscriber::registry()
@@ -56,19 +56,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_write = Arc::new(Semaphore::new(1));
     let (poll_tx, _) = tokio::sync::broadcast::channel::<routes::PollEvent>(64);
     let poll_semaphore = Arc::new(Semaphore::new(5));
+
+    let api_key = std::env::var("API_KEY")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|s| Arc::from(s.as_str()));
+    if api_key.is_none() {
+        tracing::warn!("API_KEY is not set — all endpoints are unauthenticated");
+    }
+
     let state = routes::AppState {
         pool: pool.clone(),
         http: http.clone(),
         db_write: db_write.clone(),
         poll_events: Arc::new(poll_tx),
         poll_semaphore: poll_semaphore.clone(),
+        api_key,
     };
 
     let app = routes::router(state);
 
     let bind = match std::env::var("BIND_ADDR") {
         Ok(addr) if !addr.trim().is_empty() => addr,
-        _ => "0.0.0.0:8080".to_string(),
+        _ => "127.0.0.1:8080".to_string(),
     };
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "listening: GET /feed.xml, JSON under /api/*");

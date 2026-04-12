@@ -8,11 +8,10 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** Strip tags for plain-text diff (browser). */
+/** Strip tags for plain-text diff using safe DOMParser (no script execution). */
 export function htmlToPlainText(html: string): string {
-  const d = document.createElement('div');
-  d.innerHTML = html;
-  return (d.textContent || d.innerText || '').replace(/\s+/g, ' ').trim();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
 export function inlineWordDiffHtml(prevPlain: string, nextPlain: string): string {

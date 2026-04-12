@@ -4,8 +4,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [react()],
   server: {
-    // Listen on all interfaces (localhost, LAN, some Docker/WSL setups).
-    host: true,
+    host: 'localhost',
     port: 5173,
     strictPort: true,
     proxy: {
@@ -20,7 +19,7 @@ export default defineConfig({
     },
   },
   preview: {
-    host: true,
+    host: 'localhost',
     port: 4173,
     proxy: {
       '/api': { target: 'http://127.0.0.1:8080', changeOrigin: true },

@@ -21,8 +21,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends nginx ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
-  && mkdir -p /var/lib/nginx/body /var/log/nginx /data \
-  && chown -R www-data:www-data /var/lib/nginx /var/log/nginx /usr/share/nginx/html
+  && mkdir -p /var/lib/nginx/body /var/log/nginx /data /tmp/nginx \
+  && chown -R www-data:www-data /var/lib/nginx /var/log/nginx /usr/share/nginx/html /data /tmp/nginx
 
 COPY --from=frontend /app/frontend/dist /usr/share/nginx/html
 COPY --from=rust /app/target/release/rss-repository /rss-repository
@@ -37,4 +37,5 @@ ENV RUST_LOG=info,rss_repository=info
 EXPOSE 8080
 VOLUME /data
 
+USER www-data
 ENTRYPOINT ["/entrypoint.sh"]
