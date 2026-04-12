@@ -136,7 +136,7 @@ export function FeedsPage() {
 
   const pollAllLabel =
     pollAllStatus === 'polling'
-      ? 'Polling\u2026'
+      ? 'Polling…'
       : pollAllStatus === 'success'
         ? 'Done!'
         : pollAllStatus === 'error'
@@ -186,7 +186,7 @@ export function FeedsPage() {
         </div>
 
         {!data ? (
-          <p className="muted">Loading\u2026</p>
+          <p className="muted">Loading…</p>
         ) : (
           <>
             {data.feeds.length === 0 ? (
@@ -263,7 +263,7 @@ function FeedCard({
 
   const statusIndicator =
     pollStatus === 'polling' ? (
-      <span className="poll-badge poll-badge--loading">Polling\u2026</span>
+      <span className="poll-badge poll-badge--loading">Polling…</span>
     ) : pollStatus === 'success' ? (
       <span className="poll-badge poll-badge--success">OK</span>
     ) : pollStatus === 'error' ? (
@@ -292,7 +292,7 @@ function FeedCard({
           onClick={onDelete}
           title="Delete feed"
         >
-          \u2715
+          ✕
         </button>
       </div>
       <div className="feed-card-footer">
@@ -317,7 +317,7 @@ function FeedCard({
             disabled={disabled || pollStatus === 'polling'}
             onClick={onPoll}
           >
-            {pollStatus === 'polling' ? 'Polling\u2026' : 'Poll'}
+            {pollStatus === 'polling' ? 'Polling…' : 'Poll'}
           </button>
           <a
             href={rssPath}

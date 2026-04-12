@@ -15,7 +15,7 @@ export function Toasts() {
             className={`toast ${t.ok ? 'toast--success' : 'toast--error'}`}
             onClick={() => dismissToast(t.id)}
           >
-            <span className="toast-icon">{t.ok ? '\u2713' : '\u2717'}</span>
+            <span className="toast-icon">{t.ok ? '✓' : '✗'}</span>
             <span className="toast-text">
               <strong>{name}</strong>
               {t.ok ? ' polled successfully' : ` failed${t.error ? `: ${t.error}` : ''}`}
