@@ -54,10 +54,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let db_write = Arc::new(Semaphore::new(1));
+    let (poll_tx, _) = tokio::sync::broadcast::channel::<routes::PollEvent>(64);
+    let poll_semaphore = Arc::new(Semaphore::new(5));
     let state = routes::AppState {
         pool: pool.clone(),
         http: http.clone(),
         db_write: db_write.clone(),
+        poll_events: Arc::new(poll_tx),
+        poll_semaphore: poll_semaphore.clone(),
     };
 
     let app = routes::router(state);
@@ -69,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "listening: GET /feed.xml, JSON under /api/*");
 
-    tokio::spawn(scheduler::run(pool, http, db_write));
+    tokio::spawn(scheduler::run(pool, http, db_write, poll_semaphore));
 
     axum::serve(listener, app).await?;
 

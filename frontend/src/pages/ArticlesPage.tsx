@@ -25,7 +25,6 @@ export function ArticlesPage() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-
   useEffect(() => {
     void listAllFeeds()
       .then(setFeeds)
@@ -145,6 +144,12 @@ export function ArticlesPage() {
     return `${pendingFeedIds.length} feeds selected`;
   }, [pendingFeedIds, feeds]);
 
+  const feedMap = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const f of feeds) m.set(f.id, f.title?.trim() || f.url);
+    return m;
+  }, [feeds]);
+
   return (
     <>
       {err ? <p className="err">{err}</p> : null}
@@ -191,7 +196,7 @@ export function ArticlesPage() {
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: '0.35rem',
+                gap: '0.4rem',
               }}
             >
               <input
@@ -200,7 +205,7 @@ export function ArticlesPage() {
                 value="true"
                 defaultChecked={modifiedOnly}
               />
-              Modified only (2+ versions)
+              Modified only
             </label>
             <label>
               From
@@ -211,14 +216,12 @@ export function ArticlesPage() {
               <input type="date" name="date_to" defaultValue={dateTo} />
             </label>
             <button type="submit">Apply</button>
-          </div>
-          <div className="form-row" style={{ marginTop: '0.75rem' }}>
             <a
               className="btn-rss-export"
               href={feedRssPath(rssParams)}
               target="_blank"
               rel="noreferrer"
-              title="Open RSS feed matching current filters"
+              title="Export filtered articles as RSS 2.0 feed"
             >
               RSS Export
             </a>
@@ -227,16 +230,21 @@ export function ArticlesPage() {
       </div>
 
       <div className="card">
-        <h2 className="card-title">Articles</h2>
+        <div className="card-head">
+          <h2 className="card-title">Articles</h2>
+          {!loading && <span className="muted small">{total} total</span>}
+        </div>
         {loading ? (
           <p className="muted">Loading…</p>
         ) : (
           <>
             <ul className="article-list">
               {articles.length === 0 ? (
-                <li className="muted">No articles match.</li>
+                <li className="muted">No articles match the current filters.</li>
               ) : (
-                articles.map((a) => <ArticleRow key={a.id} article={a} />)
+                articles.map((a) => (
+                  <ArticleRow key={a.id} article={a} feedName={feedMap.get(a.feed_id)} />
+                ))
               )}
             </ul>
             <PaginationBar
@@ -255,27 +263,24 @@ export function ArticlesPage() {
   );
 }
 
-function ArticleRow({ article: a }: { article: Article }) {
+function ArticleRow({ article: a, feedName }: { article: Article; feedName?: string }) {
   const published = formatDateTime(a.published_at ?? undefined);
   const fetched = formatDateTime(a.last_fetched_at);
-  const versionAt = formatDateTime(a.latest_content_fetched_at);
   const versions =
     a.content_version_count > 1 ? (
-      <span className="badge">{a.content_version_count} versions</span>
+      <span className="badge">{a.content_version_count} ver</span>
     ) : null;
 
   return (
     <li>
       <div>
-        <Link to={`/articles/${a.id}`}>{a.title || '(no title)'}</Link> {versions}
+        <Link to={`/articles/${a.id}`}>{a.title || '(no title)'}</Link>
+        {versions}
       </div>
       <div className="meta">
-        <span title={published.title}>Published: {published.display}</span>
-        <span title={fetched.title}>Last fetch: {fetched.display}</span>
-        {a.content_version_count > 1 ? (
-          <span title={versionAt.title}>Version at: {versionAt.display}</span>
-        ) : null}
-        <span className="mono wrap">guid: {a.guid}</span>
+        {feedName && <span>{feedName}</span>}
+        <span title={published.title}>{published.display}</span>
+        <span title={fetched.title}>Fetched {fetched.display}</span>
       </div>
     </li>
   );

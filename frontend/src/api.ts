@@ -42,6 +42,12 @@ async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
   return readJson<T>(path, res, text);
 }
 
+async function apiDelete<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_PREFIX}${path}`, { method: 'DELETE' });
+  const text = await res.text();
+  return readJson<T>(path, res, text);
+}
+
 export type Feed = {
   id: number;
   url: string;
@@ -113,11 +119,36 @@ export async function updateFeedInterval(
 }
 
 export async function pollFeedNow(id: number): Promise<void> {
-  await apiPostJson(`/feeds/${id}/poll`);
+  const res = await fetch(`${API_PREFIX}/feeds/${id}/poll`, { method: 'POST' });
+  if (!res.ok) throw new Error(`poll request failed: ${res.status}`);
 }
 
 export async function pollAllFeeds(): Promise<void> {
-  await apiPostJson('/feeds/poll-all');
+  const res = await fetch(`${API_PREFIX}/feeds/poll-all`, { method: 'POST' });
+  if (!res.ok) throw new Error(`poll-all request failed: ${res.status}`);
+}
+
+export type PollEvent = { feed_id: number; ok: boolean; error?: string };
+
+export function subscribePollEvents(
+  onEvent: (evt: PollEvent) => void,
+  onError?: () => void,
+): () => void {
+  const es = new EventSource(`${API_PREFIX}/feeds/events`);
+  es.addEventListener('poll_result', (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data) as PollEvent;
+      onEvent(data);
+    } catch {
+      /* ignore malformed */
+    }
+  });
+  es.onerror = () => onError?.();
+  return () => es.close();
+}
+
+export async function deleteFeed(id: number): Promise<void> {
+  await apiDelete(`/feeds/${id}`);
 }
 
 export type Article = {

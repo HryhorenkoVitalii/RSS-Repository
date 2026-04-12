@@ -172,6 +172,22 @@ pub async fn create_feed(
     Ok(id)
 }
 
+pub async fn delete_feed(
+    write_lock: &Semaphore,
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<bool, AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
+    let r = sqlx::query("DELETE FROM feeds WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
 pub async fn update_feed_interval(
     write_lock: &Semaphore,
     pool: &SqlitePool,
@@ -385,7 +401,7 @@ pub async fn list_articles(
     b.push(ARTICLE_SELECT);
     b.push(ARTICLE_JOIN);
     push_article_where(&mut b, &q.filter);
-    b.push(" ORDER BY a.last_fetched_at DESC LIMIT ");
+    b.push(" ORDER BY COALESCE(a.published_at, a.first_seen_at) DESC LIMIT ");
     b.push_bind(limit);
     b.push(" OFFSET ");
     b.push_bind(offset);

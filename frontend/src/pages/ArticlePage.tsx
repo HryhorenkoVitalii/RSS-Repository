@@ -36,11 +36,9 @@ export function ArticlePage() {
   if (err) {
     return (
       <>
-        <p className="small">
-          <Link to="/articles" className="nav-link">
-            ← Articles
-          </Link>
-        </p>
+        <Link to="/articles" className="back-link">
+          ← Back to articles
+        </Link>
         <p className="err">{err}</p>
       </>
     );
@@ -51,22 +49,28 @@ export function ArticlePage() {
   }
 
   const { article, versions } = data;
-  const link =
-    article.link != null && article.link !== '' ? (
-      <p className="small">
-        <a href={article.link} target="_blank" rel="noopener noreferrer">
-          Open link
-        </a>
-      </p>
-    ) : null;
+  const safeLink = (() => {
+    if (!article.link) return null;
+    try {
+      const u = new URL(article.link);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return article.link;
+    } catch { /* invalid URL */ }
+    return null;
+  })();
+
+  const link = safeLink ? (
+    <p className="small">
+      <a href={safeLink} target="_blank" rel="noopener noreferrer">
+        Open link
+      </a>
+    </p>
+  ) : null;
 
   return (
     <>
-      <p className="small">
-        <Link to="/articles" className="nav-link">
-          ← Articles
-        </Link>
-      </p>
+      <Link to="/articles" className="back-link">
+        ← Back to articles
+      </Link>
       <div className="card article">
         <h1 className="card-title">{article.title || '(no title)'}</h1>
         {link}

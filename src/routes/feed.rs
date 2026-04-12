@@ -113,6 +113,9 @@ pub async fn rss_feed(
     let only_modified = matches!(q.modified_only.as_deref(), Some("true" | "on" | "1"));
 
     let mut feed_ids = parse_feed_ids(&q.feed_id);
+    if feed_ids.len() > 50 {
+        return Err(AppError::BadRequest("too many feed_id values (max 50)".into()));
+    }
 
     let last_fetched_from = q.date_from.as_deref().and_then(parse_date_from_day);
     let last_fetched_before = q.date_to.as_deref().and_then(parse_date_to_exclusive);
@@ -154,7 +157,7 @@ pub async fn rss_feed(
                 .await
                 .map_err(|e| {
                     tracing::warn!(feed_id = feed.id, error = %e, "rss pre-fetch poll failed");
-                    AppError::BadGateway(format!("could not refresh feed from source: {e}"))
+                    AppError::BadGateway("could not refresh feed from source".into())
                 })?;
         }
     }

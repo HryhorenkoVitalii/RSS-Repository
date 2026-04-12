@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use tokio::sync::Semaphore;
@@ -71,28 +69,3 @@ pub async fn poll_feed(
     Ok(())
 }
 
-/// Fire-and-forget poll; on failure updates `last_polled_at` so the scheduler can retry.
-pub fn spawn_poll_feed(
-    pool: SqlitePool,
-    client: reqwest::Client,
-    db_write: Arc<Semaphore>,
-    feed: Feed,
-) {
-    tokio::spawn(async move {
-        let fid = feed.id;
-        match poll_feed(db_write.as_ref(), &pool, &client, &feed).await {
-            Ok(()) => tracing::info!(feed_id = fid, "feed poll ok"),
-            Err(e) => {
-                tracing::warn!(feed_id = fid, error = %e, "feed poll failed");
-                let _ = db::update_feed_meta(
-                    db_write.as_ref(),
-                    &pool,
-                    fid,
-                    None,
-                    chrono::Utc::now(),
-                )
-                .await;
-            }
-        }
-    });
-}

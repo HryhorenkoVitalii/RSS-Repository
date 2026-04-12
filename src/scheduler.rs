@@ -2,20 +2,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::SqlitePool;
-use tokio::sync::Semaphore as PollSemaphore;
+use tokio::sync::Semaphore;
 
 use crate::db;
 use crate::ingest::poll_feed;
 
 const TICK_SECS: u64 = 10;
-const MAX_CONCURRENT_POLLS: usize = 5;
 
 pub async fn run(
     pool: SqlitePool,
     client: reqwest::Client,
-    db_write: Arc<tokio::sync::Semaphore>,
+    db_write: Arc<Semaphore>,
+    sem: Arc<Semaphore>,
 ) {
-    let sem = Arc::new(PollSemaphore::new(MAX_CONCURRENT_POLLS));
     loop {
         tokio::time::sleep(Duration::from_secs(TICK_SECS)).await;
         let feeds = match db::feeds_due_for_poll(&pool).await {

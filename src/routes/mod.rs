@@ -13,10 +13,18 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use sqlx::SqlitePool;
-use tokio::sync::Semaphore;
+use tokio::sync::{broadcast, Semaphore};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::db;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PollEvent {
+    pub feed_id: i64,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
 
 pub(super) fn base_url_from_headers(headers: &axum::http::HeaderMap) -> String {
     if let Ok(v) = env::var("PUBLIC_BASE_URL") {
@@ -43,6 +51,9 @@ pub struct AppState {
     pub http: reqwest::Client,
     /// One writer at a time for SQLite (avoids SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT under concurrent polls).
     pub db_write: Arc<Semaphore>,
+    pub poll_events: Arc<broadcast::Sender<PollEvent>>,
+    /// Global concurrency limiter for poll operations (API + scheduler).
+    pub poll_semaphore: Arc<Semaphore>,
 }
 
 fn cors_layer() -> CorsLayer {

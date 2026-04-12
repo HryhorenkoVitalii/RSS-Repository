@@ -1,24 +1,33 @@
+use std::convert::Infallible;
+use std::time::Duration;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
+use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 
 use crate::db::{
     self, Article, ArticleContentVersion, ArticleFilter, ArticleListQuery, Feed, FeedOption,
 };
 use crate::error::AppError;
-use crate::ingest::spawn_poll_feed;
+use crate::ingest::poll_feed;
 
-use super::AppState;
+use super::{AppState, PollEvent};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
+        .route("/feeds/events", get(poll_events_sse))
         .route("/feeds/poll-all", post(poll_all_feeds))
         .route("/feeds/options", get(list_feed_options))
         .route("/feeds", get(list_feeds).post(create_feed))
+        .route("/feeds/{id}", delete(delete_feed))
         .route("/feeds/{id}/interval", post(update_feed_interval))
         .route("/feeds/{id}/poll", post(poll_feed_now))
         .route("/articles", get(list_articles))
@@ -117,6 +126,16 @@ async fn update_feed_interval(
     }
     let interval = body.poll_interval_seconds.clamp(60, 86_400);
     db::update_feed_interval(state.db_write.as_ref(), &state.pool, id, interval).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_feed(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    if !db::delete_feed(state.db_write.as_ref(), &state.pool, id).await? {
+        return Err(AppError::NotFound);
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -244,36 +263,62 @@ async fn get_article_detail(
     Ok(Json(ArticleDetailResponse { article, versions }))
 }
 
-#[derive(Serialize)]
-struct Accepted {
-    accepted: bool,
+async fn poll_events_sse(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.poll_events.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|msg| match msg {
+        Ok(evt) => {
+            let data = serde_json::to_string(&evt).unwrap_or_default();
+            Some(Ok(Event::default().event("poll_result").data(data)))
+        }
+        Err(_) => None,
+    });
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("ping"),
+    )
+}
+
+fn spawn_poll_and_notify(state: AppState, feed: Feed) {
+    tokio::spawn(async move {
+        let feed_id = feed.id;
+        let event = match poll_feed(state.db_write.as_ref(), &state.pool, &state.http, &feed).await
+        {
+            Ok(()) => PollEvent {
+                feed_id,
+                ok: true,
+                error: None,
+            },
+            Err(e) => {
+                tracing::warn!(feed_id, error = %e, "poll failed");
+                PollEvent {
+                    feed_id,
+                    ok: false,
+                    error: Some(e),
+                }
+            }
+        };
+        let _ = state.poll_events.send(event);
+    });
 }
 
 async fn poll_feed_now(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<(StatusCode, Json<Accepted>), AppError> {
+) -> Result<StatusCode, AppError> {
     let feed = db::get_feed(&state.pool, id)
         .await?
         .ok_or(AppError::NotFound)?;
-    spawn_poll_feed(
-        state.pool.clone(),
-        state.http.clone(),
-        state.db_write.clone(),
-        feed,
-    );
-    Ok((StatusCode::ACCEPTED, Json(Accepted { accepted: true })))
+    spawn_poll_and_notify(state, feed);
+    Ok(StatusCode::ACCEPTED)
 }
 
-async fn poll_all_feeds(
-    State(state): State<AppState>,
-) -> Result<(StatusCode, Json<Accepted>), AppError> {
+async fn poll_all_feeds(State(state): State<AppState>) -> Result<StatusCode, AppError> {
     let feeds = db::list_feeds(&state.pool).await?;
-    let pool = state.pool.clone();
-    let client = state.http.clone();
-    let db_write = state.db_write.clone();
     for feed in feeds {
-        spawn_poll_feed(pool.clone(), client.clone(), db_write.clone(), feed);
+        spawn_poll_and_notify(state.clone(), feed);
     }
-    Ok((StatusCode::ACCEPTED, Json(Accepted { accepted: true })))
+    Ok(StatusCode::ACCEPTED)
 }
