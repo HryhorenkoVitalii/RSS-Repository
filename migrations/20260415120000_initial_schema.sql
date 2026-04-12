@@ -1,6 +1,6 @@
--- Squashed schema: feeds, articles, article_contents (with fetched_at), request_log.
--- If you had an older DB from pre-squash migrations, remove the database file (and wal/shm)
--- or drop all tables and `_sqlx_migrations` before running the app again.
+-- Squashed schema: feeds, articles, article_contents, request_log, media.
+-- Если база уже создавалась старыми миграциями (другие имена в `_sqlx_migrations`),
+-- удали файл БД (и `-wal` / `-shm`) или очисти `_sqlx_migrations` и таблицы.
 
 CREATE TABLE feeds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,3 +45,14 @@ CREATE TABLE request_log (
 );
 
 CREATE INDEX idx_request_log_requested_at ON request_log (requested_at DESC);
+
+CREATE TABLE media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256 TEXT NOT NULL UNIQUE,
+    original_url TEXT NOT NULL,
+    mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+    file_size INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_media_sha256 ON media (sha256);

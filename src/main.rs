@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if error::error_chain_implies_readonly(&e) {
             msg.push_str(
                 "\n\nSQLite READONLY (код 8): нет права записи в файл БД или в каталог (нужны файлы .db-wal / .db-shm рядом с базой). \
-Сообщение с номером вроде «20260412200000» — это версия миграции (например `media`), а не отдельный «код ошибки».\n\
+Длинное число в тексте ошибки — это версия миграции (префикс имени `migrations/*.sql`), а не отдельный «код ошибки».\n\
 • Podman: том `-v …/data:/data:U` (см. scripts/podman-run.sh) или `sudo chown -R 33:33` на каталог с БД на хосте.\n\
 • Попробуй переменную окружения SQLITE_JOURNAL_MODE=delete.\n",
             );
