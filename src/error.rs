@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -20,8 +22,30 @@ pub struct ErrorBody {
     pub error: String,
 }
 
-/// SQLite `SQLITE_READONLY` (primary code 8): нет права записи в файл БД или каталог (WAL/shm).
-fn is_sqlite_readonly(e: &sqlx::Error) -> bool {
+/// Текст ошибки SQLite/sqlx: «(code: 8)» = `SQLITE_READONLY`.
+fn error_text_implies_readonly(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    if lower.contains("readonly") || lower.contains("read-only") {
+        return true;
+    }
+    // Формат libsqlite3/sqlx: `(code: 8)` или редкие варианты
+    text.contains("(code: 8)") || text.contains("code: 8)")
+}
+
+/// Обход `source()` — нужно для `MigrateError`, где код 8 внутри вложенного `sqlx::Error`.
+pub fn error_chain_implies_readonly<E: Error + 'static>(e: &E) -> bool {
+    let mut cur: Option<&(dyn Error + 'static)> = Some(e);
+    while let Some(err) = cur {
+        if error_text_implies_readonly(&err.to_string()) {
+            return true;
+        }
+        cur = err.source();
+    }
+    false
+}
+
+/// Прямой `sqlx::Error::Database` с кодом 8 (в т.ч. расширенный: младший байт = 8).
+fn sqlx_database_readonly(e: &sqlx::Error) -> bool {
     let Some(db) = e.as_database_error() else {
         return false;
     };
@@ -37,8 +61,12 @@ fn is_sqlite_readonly(e: &sqlx::Error) -> bool {
     false
 }
 
+fn sqlx_error_readonly(e: &sqlx::Error) -> bool {
+    sqlx_database_readonly(e) || error_text_implies_readonly(&e.to_string())
+}
+
 fn db_client_message(e: &sqlx::Error) -> String {
-    if is_sqlite_readonly(e) {
+    if sqlx_error_readonly(e) {
         return "Ошибка SQLite 8 (READONLY): нельзя писать в файл базы или в каталог (файлы .db-wal / .db-shm). Проверь права на каталог с БД: в Podman смонтируй том с :U (./scripts/podman-run.sh так делает по умолчанию) или выполни chown 33:33 на каталог data на хосте; при необходимости задай SQLITE_JOURNAL_MODE=delete.".to_string();
     }
     "database error".to_string()
@@ -51,7 +79,7 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::BadGateway(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             AppError::Db(e) => {
-                if is_sqlite_readonly(e) {
+                if sqlx_error_readonly(e) {
                     tracing::error!(error = %e, "database error (SQLite READONLY / code 8)");
                 } else {
                     tracing::error!(error = %e, "database error");

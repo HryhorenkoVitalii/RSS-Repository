@@ -16,6 +16,27 @@ use sqlx::sqlite::{
 use tokio::sync::Semaphore;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+fn sqlite_journal_mode() -> SqliteJournalMode {
+    match std::env::var("SQLITE_JOURNAL_MODE") {
+        Ok(s) => match s.trim().parse() {
+            Ok(m) => {
+                if m != SqliteJournalMode::Wal {
+                    tracing::info!(?m, "SQLite journal mode (non-WAL)");
+                }
+                m
+            }
+            Err(_) => {
+                tracing::warn!(
+                    value = s.trim(),
+                    "invalid SQLITE_JOURNAL_MODE; using WAL"
+                );
+                SqliteJournalMode::Wal
+            }
+        },
+        Err(_) => SqliteJournalMode::Wal,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -33,13 +54,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let database_url = std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
 
+    let journal_mode = sqlite_journal_mode();
     let connect_options = SqliteConnectOptions::from_str(&database_url)
         .map_err(|e| format!("invalid DATABASE_URL: {e}"))?
         .create_if_missing(true)
         .foreign_keys(true)
         // Параллель: HTTP + планировщик + несколько poll. WAL + busy_timeout снимают «database is locked».
         .busy_timeout(Duration::from_secs(15))
-        .journal_mode(SqliteJournalMode::Wal)
+        .journal_mode(journal_mode)
         .synchronous(SqliteSynchronous::Normal);
 
     let pool = SqlitePoolOptions::new()
@@ -47,7 +69,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect_with(connect_options)
         .await?;
 
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
+        let mut msg = format!("database migration failed: {e}");
+        if error::error_chain_implies_readonly(&e) {
+            msg.push_str(
+                "\n\nSQLite READONLY (код 8): нет права записи в файл БД или в каталог (нужны файлы .db-wal / .db-shm рядом с базой). \
+Сообщение с номером вроде «20260412200000» — это версия миграции (например `media`), а не отдельный «код ошибки».\n\
+• Podman: том `-v …/data:/data:U` (см. scripts/podman-run.sh) или `sudo chown -R 33:33` на каталог с БД на хосте.\n\
+• Попробуй переменную окружения SQLITE_JOURNAL_MODE=delete.\n",
+            );
+        }
+        return Err(msg.into());
+    }
 
     let http = reqwest::Client::builder()
         .user_agent(concat!("rss-repository/", env!("CARGO_PKG_VERSION")))
