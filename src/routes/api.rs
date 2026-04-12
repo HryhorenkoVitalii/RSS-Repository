@@ -17,6 +17,7 @@ use crate::db::{
 };
 use crate::error::AppError;
 use crate::ingest::poll_feed;
+use crate::media;
 use crate::rss::validate_feed_url;
 
 use super::{AppState, PollEvent};
@@ -33,6 +34,7 @@ pub fn routes() -> Router<AppState> {
         .route("/feeds/{id}/poll", post(poll_feed_now))
         .route("/articles", get(list_articles))
         .route("/articles/{id}", get(get_article_detail))
+        .route("/media/{hash}", get(serve_media))
 }
 
 #[derive(Serialize)]
@@ -332,4 +334,32 @@ async fn poll_all_feeds(State(state): State<AppState>) -> Result<StatusCode, App
         spawn_poll_and_notify(state.clone(), feed);
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn serve_media(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<axum::response::Response, AppError> {
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::BadRequest("invalid hash".into()));
+    }
+
+    let row = media::get_media_by_hash(&state.pool, &hash)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let dir = media::media_dir();
+    let file_path = media::find_media_file(&dir, &hash).ok_or(AppError::NotFound)?;
+
+    let bytes = tokio::fs::read(&file_path)
+        .await
+        .map_err(|_| AppError::NotFound)?;
+
+    let cache_forever = "public, max-age=31536000, immutable";
+    Ok(axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", row.mime_type.as_str())
+        .header("Cache-Control", cache_forever)
+        .body(axum::body::Body::from(bytes))
+        .unwrap())
 }

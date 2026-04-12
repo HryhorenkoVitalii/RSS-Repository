@@ -1,6 +1,7 @@
 mod db;
 mod error;
 mod ingest;
+mod media;
 mod routes;
 mod rss;
 mod scheduler;

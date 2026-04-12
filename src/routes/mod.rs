@@ -83,7 +83,7 @@ async fn require_api_key(
         None => return next.run(req).await,
     };
     let path = req.uri().path();
-    if path == "/api/health" {
+    if path == "/api/health" || path.starts_with("/api/media/") {
         return next.run(req).await;
     }
 

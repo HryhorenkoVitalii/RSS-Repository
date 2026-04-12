@@ -47,11 +47,6 @@ fn normalize_plain(s: impl AsRef<str>) -> Result<String, regex::Error> {
     Ok(collapsed.trim().to_lowercase())
 }
 
-pub fn content_hash(canonical: &str) -> Vec<u8> {
-    let mut h = Sha256::new();
-    h.update(canonical.as_bytes());
-    h.finalize().to_vec()
-}
 
 #[cfg(test)]
 mod tests {

@@ -10,3 +10,6 @@ rss_repository.db-*
 
 # SQLite при запуске контейнера через scripts/podman-run.sh (bind mount ./data)
 /data
+
+# Downloaded media files
+/media_store
