@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   createFeed,
   deleteFeed,
@@ -279,11 +280,17 @@ function FeedCard({
   return (
     <div className={cardClass}>
       <div className="feed-card-header">
-        <span className="feed-card-id">#{feed.id}</span>
-        <div className="feed-card-info">
-          {title && <div className="feed-card-title" title={title}>{title}</div>}
-          <div className="feed-card-url" title={feed.url}>{feed.url}</div>
-        </div>
+        <Link
+          className="feed-card-header-link"
+          to={`/articles?feed_id=${feed.id}`}
+          title="View articles from this feed"
+        >
+          <span className="feed-card-id">#{feed.id}</span>
+          <div className="feed-card-info">
+            {title && <div className="feed-card-title" title={title}>{title}</div>}
+            <div className="feed-card-url" title={feed.url}>{feed.url}</div>
+          </div>
+        </Link>
         {statusIndicator}
         <button
           type="button"

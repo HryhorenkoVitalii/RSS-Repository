@@ -346,6 +346,29 @@ input[type='checkbox'] {
   gap: 0.65rem;
 }
 
+.feed-card-header-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  margin: -4px;
+  padding: 4px;
+  outline-offset: 2px;
+}
+
+.feed-card-header-link:hover .feed-card-title {
+  color: var(--accent);
+}
+
+.feed-card-header-link:hover .feed-card-url {
+  color: var(--text-secondary);
+}
+
 .feed-card-id {
   flex-shrink: 0;
   font-size: 0.72rem;
