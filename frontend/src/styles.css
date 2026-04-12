@@ -785,10 +785,15 @@ button.poll-error {
   line-height: 1.7;
 }
 
-.article .body img {
+.article .body img,
+.article .body video,
+.article .body audio,
+.article .body iframe {
   max-width: 100%;
   height: auto;
   border-radius: var(--radius-sm);
+  display: block;
+  margin: 0.5rem 0;
 }
 
 .body-versions {

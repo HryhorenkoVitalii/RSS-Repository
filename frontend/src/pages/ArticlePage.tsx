@@ -123,7 +123,10 @@ function VersionBlock({
   let bodyHtml: string;
 
   if (prev == null) {
-    bodyHtml = DOMPurify.sanitize(v.body);
+    bodyHtml = DOMPurify.sanitize(v.body, {
+      ADD_TAGS: ['video', 'source', 'audio', 'iframe'],
+      ADD_ATTR: ['controls', 'preload', 'src', 'type', 'style', 'alt', 'poster', 'allowfullscreen'],
+    });
   } else {
     const titleDiff = inlineWordDiffTitleHtml(prev.title, v.title);
     if (titleDiff) {
