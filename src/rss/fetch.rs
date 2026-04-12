@@ -51,20 +51,28 @@ fn is_private_ip(ip: IpAddr) -> bool {
     }
 }
 
-/// Validate URL: only http(s), resolve DNS, reject private IPs.
+fn allow_private_feeds() -> bool {
+    std::env::var("ALLOW_PRIVATE_FEEDS")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Validate URL: only http(s), resolve DNS, reject private IPs (unless ALLOW_PRIVATE_FEEDS=true).
 pub fn validate_feed_url(feed_url: &str) -> Result<Url, FeedFetchError> {
     let url = Url::parse(feed_url).map_err(|_| FeedFetchError::BadUrl)?;
     match url.scheme() {
         "http" | "https" => {}
         _ => return Err(FeedFetchError::ForbiddenScheme),
     }
-    let host = url.host_str().ok_or(FeedFetchError::BadUrl)?;
-    let port = url.port_or_known_default().unwrap_or(80);
-    let addr_str = format!("{host}:{port}");
-    if let Ok(addrs) = addr_str.to_socket_addrs() {
-        for addr in addrs {
-            if is_private_ip(addr.ip()) {
-                return Err(FeedFetchError::PrivateIp);
+    if !allow_private_feeds() {
+        let host = url.host_str().ok_or(FeedFetchError::BadUrl)?;
+        let port = url.port_or_known_default().unwrap_or(80);
+        let addr_str = format!("{host}:{port}");
+        if let Ok(addrs) = addr_str.to_socket_addrs() {
+            for addr in addrs {
+                if is_private_ip(addr.ip()) {
+                    return Err(FeedFetchError::PrivateIp);
+                }
             }
         }
     }
