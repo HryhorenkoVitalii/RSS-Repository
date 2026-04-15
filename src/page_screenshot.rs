@@ -4,7 +4,6 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
@@ -12,27 +11,6 @@ use crate::chromium_binary::{chromium_wants_no_sandbox, resolve_chromium_binary}
 use crate::env_util::env_explicitly_off;
 use crate::rss::validate_feed_url;
 use crate::screenshot_env::{chromium_timeout_secs, screenshot_max_height, screenshot_width};
-
-/// Stored `article_contents.body` prefix for legacy Chromium snapshot versions.
-#[allow(dead_code)]
-pub const CHROMIUM_SCREENSHOT_MARKER: &str = "<!--rss-repository:chromium-screenshot-->\n";
-
-#[allow(dead_code)]
-pub fn chromium_screenshot_body_html(media_src: &str) -> String {
-    format!(
-        r#"{}<div class="rss-chromium-screenshot"><p class="muted small">Снимок страницы (headless Chromium).</p><img src="{}" alt="Снимок страницы" loading="lazy" style="max-width:100%;height:auto;" /></div>"#,
-        CHROMIUM_SCREENSHOT_MARKER,
-        media_src.replace('"', "&quot;")
-    )
-}
-
-#[allow(dead_code)]
-pub fn chromium_screenshot_content_hash(body: &str) -> Vec<u8> {
-    let mut h = Sha256::new();
-    h.update(b"rss-repository:chromium-screenshot:v1:");
-    h.update(body.as_bytes());
-    h.finalize().to_vec()
-}
 
 /// Run headless Chromium and write a PNG. По умолчанию CDP: обрезка по `article`/`main` (без пустых полей по бокам).
 /// `SCREENSHOT_USE_CDP=0` — старый режим: один кадр всего вьюпорта (`--screenshot`).

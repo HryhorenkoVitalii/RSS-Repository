@@ -186,20 +186,20 @@ pub async fn rss_feed(
             .map(|t| format!("RSS Repository — {t}"))
             .unwrap_or_else(|| format!("RSS Repository — лента #{fid}"));
         let description =
-            format!("Собранные статьи из вашей ленты (id {fid}). HTML: {base_trim}/articles",);
-        (title, description, format!("{base_trim}/articles"))
+            format!("Собранные статьи из вашей ленты (id {fid}). HTML: {base_trim}/",);
+        (title, description, format!("{base_trim}/"))
     } else if feed_ids.len() > 1 {
         let ids_str: Vec<String> = feed_ids.iter().map(|id| id.to_string()).collect();
         let title = format!("RSS Repository — ленты {}", ids_str.join(", "));
         let description = format!(
-            "Собранные статьи из выбранных лент ({}). HTML: {base_trim}/articles",
+            "Собранные статьи из выбранных лент ({}). HTML: {base_trim}/",
             ids_str.join(", ")
         );
-        (title, description, format!("{base_trim}/articles"))
+        (title, description, format!("{base_trim}/"))
     } else {
         let title = "RSS Repository — все ленты".to_string();
         let description = "Все собранные статьи. Фильтр: ?feed_id=1,2,3&modified_only=1".to_string();
-        let channel_link = format!("{base_trim}/articles");
+        let channel_link = format!("{base_trim}/");
         (title, description, channel_link)
     };
 
