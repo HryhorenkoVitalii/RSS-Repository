@@ -581,8 +581,8 @@ input[type='checkbox'] {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.4rem;
+  gap: 0.45rem;
+  padding: 0.3rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card-inner, rgba(0, 0, 0, 0.15));
@@ -598,20 +598,29 @@ input[type='checkbox'] {
 
 .reaction-chip {
   display: inline-flex;
-  align-items: baseline;
-  gap: 0.15rem;
+  align-items: center;
+  gap: 0.2rem;
   font-size: 0.95rem;
   line-height: 1.2;
 }
 
+.reaction-chip:not(:first-child) {
+  border-left: 1px solid var(--border);
+  padding-left: 0.45rem;
+  margin-left: 0.05rem;
+}
+
 .reaction-chip-emoji {
-  font-size: 1.05rem;
+  font-size: 1.12rem;
+  line-height: 1;
 }
 
 .reaction-chip-count {
-  font-size: 0.72rem;
-  color: var(--muted);
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  opacity: 0.88;
 }
 
 .reaction-modal-backdrop {
@@ -637,6 +646,18 @@ input[type='checkbox'] {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
 }
 
+.reaction-modal--telegram {
+  width: min(30rem, 100%);
+  overflow: visible;
+}
+
+.reaction-modal--telegram .reaction-modal-head,
+.reaction-modal--telegram .reaction-modal-hint,
+.reaction-modal--telegram .reaction-modal-loading,
+.reaction-modal--telegram .err {
+  overflow: visible;
+}
+
 .reaction-modal-head {
   display: flex;
   align-items: flex-start;
@@ -650,40 +671,149 @@ input[type='checkbox'] {
 }
 
 .reaction-modal-hint {
-  margin: 0.5rem 0 0.75rem;
+  margin: 0.45rem 0 0.65rem;
+  line-height: 1.45;
 }
 
-.reaction-history-list {
+.reaction-modal-loading {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.reaction-modal-current-shell {
+  margin-top: 0.25rem;
+}
+
+.reaction-modal-current-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: right;
+}
+
+.reaction-modal-current-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.reaction-current-card-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.reaction-current-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  min-width: 4.6rem;
+  padding: 0.55rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-inner, rgba(0, 0, 0, 0.12));
+  cursor: default;
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+
+.reaction-current-card-wrap:hover .reaction-current-card,
+.reaction-current-card-wrap:focus-within .reaction-current-card {
+  border-color: var(--accent, #5ba4f5);
+  box-shadow: 0 0 0 1px rgba(91, 164, 245, 0.22);
+}
+
+.reaction-current-card-emoji {
+  font-size: 1.85rem;
+  line-height: 1;
+}
+
+.reaction-current-card-count {
+  font-size: 1.08rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  letter-spacing: 0.02em;
+}
+
+.reaction-current-popover {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 4px);
+  transform: translateX(-50%);
+  z-index: 5;
+  min-width: 12.5rem;
+  max-width: min(22rem, 90vw);
+  max-height: 15rem;
+  overflow: auto;
+  padding: 0.5rem 0.65rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card-bg, var(--bg));
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.22);
+  text-align: left;
+}
+
+.reaction-current-card-wrap:hover .reaction-current-popover,
+.reaction-current-card-wrap:focus-within .reaction-current-popover {
+  display: block;
+}
+
+.reaction-current-popover-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0 0 0.35rem;
+}
+
+.reaction-current-popover-empty {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.reaction-current-popover-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.reaction-history-list li {
-  display: grid;
-  grid-template-columns: 2.25rem 1fr auto;
-  gap: 0.5rem;
+.reaction-current-popover-list li {
+  display: flex;
   align-items: baseline;
-  padding: 0.4rem 0;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.28rem 0;
   border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
 }
 
-.reaction-history-list li:last-child {
+.reaction-current-popover-list li:last-child {
   border-bottom: none;
 }
 
-.reaction-history-emoji {
-  font-size: 1.15rem;
-  text-align: center;
-}
-
-.reaction-history-count {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.reaction-history-time {
+.reaction-current-popover-list time {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reaction-current-popover-count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  flex-shrink: 0;
 }
 
 /* ─── Feed poll status ─── */
@@ -885,21 +1015,19 @@ button.poll-error {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.75rem 1rem;
-  background: linear-gradient(145deg, var(--hover), transparent);
+  padding: 1rem;
+  background: linear-gradient(155deg, var(--hover), rgba(11, 15, 20, 0.28));
   border-bottom: 1px solid var(--border);
 }
 
-.article-tile-placeholder-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  line-height: 1.35;
-  text-align: center;
-  color: var(--muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.article-tile-placeholder-mark {
+  width: min(42%, 6.5rem);
+  height: auto;
+  max-height: 55%;
+  border-radius: 22%;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.2);
+  opacity: 0.94;
+  object-fit: contain;
 }
 
 .article-tile-body {
@@ -1217,10 +1345,6 @@ button.poll-error {
   margin-top: 1.25rem;
 }
 
-.body-versions-hint {
-  margin: 0 0 0.25rem;
-}
-
 .body-version-details {
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -1313,8 +1437,7 @@ button.poll-error {
 }
 
 .article .body--diff ins,
-.article .diff-title-wrap ins,
-.body-versions-hint ins.diff-ins {
+.article .diff-title-wrap ins {
   background: rgba(34, 197, 94, 0.22);
   color: #bbf7d0;
   text-decoration: none;
@@ -1323,18 +1446,12 @@ button.poll-error {
 }
 
 .article .body--diff del,
-.article .diff-title-wrap del,
-.body-versions-hint del.diff-del {
+.article .diff-title-wrap del {
   background: rgba(239, 68, 68, 0.18);
   color: #fecaca;
   text-decoration: line-through;
   border-radius: 2px;
   padding: 0 0.15em;
-}
-
-.body-versions-hint ins.diff-legend,
-.body-versions-hint del.diff-legend {
-  font-weight: 600;
 }
 
 .diff-title-line {

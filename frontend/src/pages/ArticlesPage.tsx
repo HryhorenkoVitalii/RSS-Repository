@@ -341,13 +341,20 @@ export function ArticlesPage() {
   );
 }
 
-function ArticleTileCover({ src, title }: { src: string | null; title: string }) {
+function ArticleTileCover({ src }: { src: string | null }) {
   const [broken, setBroken] = useState(false);
   const showImg = src && !broken;
   if (!showImg) {
     return (
-      <div className="article-tile-placeholder">
-        <span className="article-tile-placeholder-title">{title || '(no title)'}</span>
+      <div className="article-tile-placeholder" aria-hidden="true">
+        <img
+          src="/icons/icon.svg"
+          alt=""
+          className="article-tile-placeholder-mark"
+          width={128}
+          height={128}
+          decoding="async"
+        />
       </div>
     );
   }
@@ -376,7 +383,7 @@ function ArticleTile({ article: a, feedName }: { article: Article; feedName?: st
   return (
     <article className="article-tile">
       <Link to={`/articles/${a.id}`} className="article-tile-link">
-        <ArticleTileCover src={imgUrl} title={a.title || '(no title)'} />
+        <ArticleTileCover src={imgUrl} />
         <div className="article-tile-body">
           <h3 className="article-tile-heading">{a.title || '(no title)'}</h3>
           {versions ? <div className="article-tile-badges">{versions}</div> : null}
