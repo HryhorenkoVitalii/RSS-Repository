@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use tokio::sync::Semaphore;
@@ -10,6 +12,10 @@ pub struct Feed {
     pub url: String,
     pub title: Option<String>,
     pub poll_interval_seconds: i32,
+    /// Telegram preview only: max posts to parse per poll (1–500). Ignored for RSS URLs.
+    pub telegram_max_items: i32,
+    /// RSS: when plain-text body from the feed is very short, fetch HTML from `item.link`.
+    pub expand_article_from_link: bool,
     pub created_at: DateTime<Utc>,
     pub last_polled_at: Option<DateTime<Utc>>,
 }
@@ -37,6 +43,21 @@ pub struct Article {
 }
 
 /// One stored text version (order by increasing `id`).
+/// Current Telegram reaction counts for one article (snapshot).
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct ArticleReactionSnapshot {
+    pub emoji: String,
+    pub count_display: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct ArticleReactionHistoryEntry {
+    pub id: i64,
+    pub emoji: String,
+    pub count_display: String,
+    pub observed_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct ArticleContentVersion {
     pub id: i64,
@@ -72,7 +93,7 @@ INNER JOIN article_contents cur ON cur.id = (
 
 pub async fn list_feeds(pool: &SqlitePool) -> Result<Vec<Feed>, AppError> {
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
            FROM feeds ORDER BY id"#,
     )
     .fetch_all(pool)
@@ -95,7 +116,7 @@ pub async fn list_feeds_page(
     let limit = limit.clamp(1, 200);
     let offset = offset.max(0);
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
            FROM feeds ORDER BY id LIMIT ? OFFSET ?"#,
     )
     .bind(limit)
@@ -127,7 +148,7 @@ pub async fn find_feeds_by_title_ci(pool: &SqlitePool, title: &str) -> Result<Ve
         return Ok(vec![]);
     }
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
            FROM feeds
            WHERE title IS NOT NULL
              AND TRIM(title) != ''
@@ -141,7 +162,7 @@ pub async fn find_feeds_by_title_ci(pool: &SqlitePool, title: &str) -> Result<Ve
 
 pub async fn get_feed(pool: &SqlitePool, id: i64) -> Result<Option<Feed>, AppError> {
     let row = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
            FROM feeds WHERE id = ?"#,
     )
     .bind(id)
@@ -155,18 +176,22 @@ pub async fn create_feed(
     pool: &SqlitePool,
     url: &str,
     poll_interval_seconds: i32,
+    telegram_max_items: i32,
+    expand_article_from_link: bool,
 ) -> Result<i64, AppError> {
     let _w = write_lock
         .acquire()
         .await
         .expect("db_write semaphore must stay open");
     let id = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO feeds (url, poll_interval_seconds)
-           VALUES (?, ?)
+        r#"INSERT INTO feeds (url, poll_interval_seconds, telegram_max_items, expand_article_from_link)
+           VALUES (?, ?, ?, ?)
            RETURNING id"#,
     )
     .bind(url)
     .bind(poll_interval_seconds)
+    .bind(telegram_max_items)
+    .bind(expand_article_from_link)
     .fetch_one(pool)
     .await?;
     Ok(id)
@@ -206,6 +231,42 @@ pub async fn update_feed_interval(
     Ok(r.rows_affected() > 0)
 }
 
+pub async fn update_feed_telegram_max_items(
+    write_lock: &Semaphore,
+    pool: &SqlitePool,
+    id: i64,
+    telegram_max_items: i32,
+) -> Result<bool, AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
+    let r = sqlx::query(r#"UPDATE feeds SET telegram_max_items = ? WHERE id = ?"#)
+        .bind(telegram_max_items)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+pub async fn update_feed_expand_article_from_link(
+    write_lock: &Semaphore,
+    pool: &SqlitePool,
+    id: i64,
+    expand_article_from_link: bool,
+) -> Result<bool, AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
+    let r = sqlx::query(r#"UPDATE feeds SET expand_article_from_link = ? WHERE id = ?"#)
+        .bind(expand_article_from_link)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
 pub async fn update_feed_meta(
     write_lock: &Semaphore,
     pool: &SqlitePool,
@@ -229,7 +290,7 @@ pub async fn update_feed_meta(
 /// Feeds that need polling: never polled, or interval elapsed.
 pub async fn feeds_due_for_poll(pool: &SqlitePool) -> Result<Vec<Feed>, AppError> {
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
            FROM feeds
            WHERE last_polled_at IS NULL
               OR (CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', last_polled_at) AS INTEGER))
@@ -248,6 +309,71 @@ pub struct UpsertArticle<'a> {
     pub content_hash: &'a [u8],
     pub published_at: Option<DateTime<Utc>>,
     pub now: DateTime<Utc>,
+}
+
+async fn sync_article_telegram_reactions_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    article_id: i64,
+    new_rx: &[(String, String)],
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let old: Vec<(String, String)> = sqlx::query_as(
+        r#"SELECT emoji, count_display FROM article_reactions WHERE article_id = ?"#,
+    )
+    .bind(article_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let old_map: HashMap<String, String> = old.into_iter().collect();
+    let new_map: HashMap<String, String> = new_rx.iter().cloned().collect();
+    if old_map == new_map {
+        return Ok(());
+    }
+    let t = now.to_rfc3339();
+    for (emoji, new_c) in &new_map {
+        if old_map.get(emoji) != Some(new_c) {
+            sqlx::query(
+                r#"INSERT INTO article_reaction_history (article_id, emoji, count_display, observed_at)
+                   VALUES (?, ?, ?, ?)"#,
+            )
+            .bind(article_id)
+            .bind(emoji)
+            .bind(new_c)
+            .bind(&t)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    for emoji in old_map.keys() {
+        if !new_map.contains_key(emoji) {
+            sqlx::query(
+                r#"INSERT INTO article_reaction_history (article_id, emoji, count_display, observed_at)
+                   VALUES (?, ?, ?, ?)"#,
+            )
+            .bind(article_id)
+            .bind(emoji)
+            .bind("—")
+            .bind(&t)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    sqlx::query(r#"DELETE FROM article_reactions WHERE article_id = ?"#)
+        .bind(article_id)
+        .execute(&mut **tx)
+        .await?;
+    for (emoji, count) in new_rx {
+        sqlx::query(
+            r#"INSERT INTO article_reactions (article_id, emoji, count_display, updated_at)
+               VALUES (?, ?, ?, ?)"#,
+        )
+        .bind(article_id)
+        .bind(emoji)
+        .bind(count)
+        .bind(&t)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 async fn insert_content_tx(
@@ -272,6 +398,7 @@ pub async fn upsert_article(
     write_lock: &Semaphore,
     pool: &SqlitePool,
     row: UpsertArticle<'_>,
+    telegram_reactions: Option<&[(String, String)]>,
 ) -> Result<(), AppError> {
     let _w = write_lock
         .acquire()
@@ -292,7 +419,7 @@ pub async fn upsert_article(
     .fetch_optional(&mut *tx)
     .await?;
 
-    match existing {
+    let article_id = match existing {
         None => {
             let article_id: i64 = sqlx::query_scalar(
                 r#"INSERT INTO articles (
@@ -311,6 +438,7 @@ pub async fn upsert_article(
             insert_content_tx(&mut tx, article_id, &row)
                 .await
                 .map_err(AppError::from)?;
+            article_id
         }
         Some((id, ref old_hash)) if old_hash.as_slice() == row.content_hash => {
             sqlx::query(
@@ -324,6 +452,7 @@ pub async fn upsert_article(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+            id
         }
         Some((id, _)) => {
             insert_content_tx(&mut tx, id, &row)
@@ -340,11 +469,81 @@ pub async fn upsert_article(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+            id
         }
+    };
+
+    if let Some(rx) = telegram_reactions {
+        sync_article_telegram_reactions_tx(&mut tx, article_id, rx, row.now)
+            .await
+            .map_err(AppError::from)?;
     }
 
     tx.commit().await?;
     Ok(())
+}
+
+/// Current reaction rows for many articles (for list API).
+pub async fn list_article_reaction_snapshots_bulk(
+    pool: &SqlitePool,
+    article_ids: &[i64],
+) -> Result<HashMap<i64, Vec<ArticleReactionSnapshot>>, AppError> {
+    if article_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut qb = QueryBuilder::new(
+        "SELECT article_id, emoji, count_display FROM article_reactions WHERE article_id IN (",
+    );
+    {
+        let mut sep = qb.separated(", ");
+        for id in article_ids {
+            sep.push_bind(*id);
+        }
+    }
+    qb.push(") ORDER BY article_id, emoji");
+    let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+    let mut out: HashMap<i64, Vec<ArticleReactionSnapshot>> = HashMap::new();
+    for (article_id, emoji, count_display) in rows {
+        out.entry(article_id).or_default().push(ArticleReactionSnapshot {
+            emoji,
+            count_display,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn list_article_reaction_snapshots(
+    pool: &SqlitePool,
+    article_id: i64,
+) -> Result<Vec<ArticleReactionSnapshot>, AppError> {
+    let rows = sqlx::query_as::<_, ArticleReactionSnapshot>(
+        r#"SELECT emoji, count_display FROM article_reactions
+           WHERE article_id = ? ORDER BY emoji"#,
+    )
+    .bind(article_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn list_article_reaction_history(
+    pool: &SqlitePool,
+    article_id: i64,
+    limit: i64,
+) -> Result<Vec<ArticleReactionHistoryEntry>, AppError> {
+    let limit = limit.clamp(1, 500);
+    let rows = sqlx::query_as::<_, ArticleReactionHistoryEntry>(
+        r#"SELECT id, emoji, count_display, observed_at
+           FROM article_reaction_history
+           WHERE article_id = ?
+           ORDER BY observed_at DESC, id DESC
+           LIMIT ?"#,
+    )
+    .bind(article_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -401,7 +600,8 @@ pub async fn list_articles(
     b.push(ARTICLE_SELECT);
     b.push(ARTICLE_JOIN);
     push_article_where(&mut b, &q.filter);
-    b.push(" ORDER BY COALESCE(a.published_at, a.first_seen_at) DESC LIMIT ");
+    // Newest *news* first (publication date), not last poll time. Missing pub date → first_seen_at.
+    b.push(" ORDER BY COALESCE(a.published_at, a.first_seen_at) DESC, a.id DESC LIMIT ");
     b.push_bind(limit);
     b.push(" OFFSET ");
     b.push_bind(offset);
@@ -424,6 +624,84 @@ pub async fn get_article(pool: &SqlitePool, id: i64) -> Result<Option<Article>, 
         .fetch_optional(pool)
         .await?;
     Ok(row)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArticleContentAppendResult {
+    /// Same `content_hash` as the latest stored version; only `last_fetched_at` was bumped.
+    Unchanged,
+    /// New row in `article_contents`.
+    Inserted,
+}
+
+/// Append a new content version when the hash differs from the latest snapshot (manual “pull from link”).
+pub async fn append_article_content_version(
+    write_lock: &Semaphore,
+    pool: &SqlitePool,
+    article_id: i64,
+    title: &str,
+    body: &str,
+    content_hash: &[u8],
+    now: DateTime<Utc>,
+) -> Result<ArticleContentAppendResult, AppError> {
+    let _w = write_lock
+        .acquire()
+        .await
+        .expect("db_write semaphore must stay open");
+    let mut tx = pool.begin().await?;
+
+    let exists: Option<i64> = sqlx::query_scalar(r#"SELECT id FROM articles WHERE id = ?"#)
+        .bind(article_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let latest: Option<Vec<u8>> = sqlx::query_scalar(
+        r#"SELECT content_hash FROM article_contents
+           WHERE article_id = ? ORDER BY id DESC LIMIT 1"#,
+    )
+    .bind(article_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let Some(latest) = latest else {
+        return Err(AppError::BadRequest(
+            "у статьи нет сохранённых версий текста".into(),
+        ));
+    };
+
+    if latest.as_slice() == content_hash {
+        sqlx::query(r#"UPDATE articles SET last_fetched_at = ? WHERE id = ?"#)
+            .bind(now)
+            .bind(article_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(ArticleContentAppendResult::Unchanged);
+    }
+
+    sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO article_contents (article_id, content_hash, title, body, fetched_at)
+           VALUES (?, ?, ?, ?, ?) RETURNING id"#,
+    )
+    .bind(article_id)
+    .bind(content_hash)
+    .bind(title)
+    .bind(body)
+    .bind(now)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query(r#"UPDATE articles SET last_fetched_at = ? WHERE id = ?"#)
+        .bind(now)
+        .bind(article_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(ArticleContentAppendResult::Inserted)
 }
 
 pub async fn list_article_contents(

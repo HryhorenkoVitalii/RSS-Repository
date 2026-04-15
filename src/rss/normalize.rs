@@ -33,10 +33,9 @@ pub fn article_guid(item: &Item) -> Result<String, regex::Error> {
     Ok(format!("link:{}", hex::encode(h.finalize())))
 }
 
-/// Prefer content:encoded-style body, else description; then normalize for hashing.
-pub fn canonical_body(item: &Item) -> Result<String, regex::Error> {
-    let raw = item.content().or(item.description()).unwrap_or("");
-    normalize_plain(raw)
+/// Strip tags and collapse whitespace (used for hashing any HTML body, including after expand-from-link).
+pub fn plain_fingerprint(html: impl AsRef<str>) -> Result<String, regex::Error> {
+    normalize_plain(html)
 }
 
 fn normalize_plain(s: impl AsRef<str>) -> Result<String, regex::Error> {

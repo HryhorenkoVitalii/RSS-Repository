@@ -1,3 +1,4 @@
+mod article_expand;
 mod db;
 mod error;
 mod ingest;
@@ -5,6 +6,7 @@ mod media;
 mod routes;
 mod rss;
 mod scheduler;
+mod telegram;
 
 use std::str::FromStr;
 use std::sync::Arc;

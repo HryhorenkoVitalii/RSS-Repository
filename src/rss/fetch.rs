@@ -12,10 +12,15 @@ const MAX_ITEMS_PER_FEED: usize = 500;
 pub enum FeedFetchError {
     #[error("http: {0}")]
     Http(#[from] reqwest::Error),
+    /// HTML article page fetch (expand-from-link), not RSS XML.
+    #[error("{0}")]
+    ArticlePage(String),
     #[error("invalid feed xml: {0}")]
     Parse(String),
     #[error("feed exceeds {MAX_FEED_BYTES} bytes")]
     TooLarge,
+    #[error("страница больше лимита ({0} МБ)")]
+    PageTooLargeMb(usize),
     #[error("invalid url")]
     BadUrl,
     #[error("url scheme must be http or https")]
