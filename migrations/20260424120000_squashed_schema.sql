@@ -1,6 +1,5 @@
--- Squashed schema: feeds, articles, article_contents, request_log, media.
--- Если база уже создавалась старыми миграциями (другие имена в `_sqlx_migrations`),
--- удали файл БД (и `-wal` / `-shm`) или очисти `_sqlx_migrations` и таблицы.
+-- Полная схема (одна миграция). При переходе со старой цепочки удалите файл SQLite
+-- (и `-wal` / `-shm`) или смените `DATABASE_URL`, иначе возможен конфликт имён таблиц.
 
 CREATE TABLE feeds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8,7 +7,9 @@ CREATE TABLE feeds (
     title TEXT,
     poll_interval_seconds INTEGER NOT NULL DEFAULT 600 CHECK (poll_interval_seconds >= 60 AND poll_interval_seconds <= 86400),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_polled_at TEXT
+    last_polled_at TEXT,
+    telegram_max_items INTEGER NOT NULL DEFAULT 500 CHECK (telegram_max_items >= 1 AND telegram_max_items <= 500),
+    expand_article_from_link INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE articles (
@@ -56,3 +57,34 @@ CREATE TABLE media (
 );
 
 CREATE INDEX idx_media_sha256 ON media (sha256);
+
+CREATE TABLE article_reactions (
+    article_id INTEGER NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    count_display TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (article_id, emoji)
+);
+
+CREATE INDEX idx_article_reactions_article ON article_reactions (article_id);
+
+CREATE TABLE article_reaction_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    article_id INTEGER NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    count_display TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_article_reaction_history_article_time
+    ON article_reaction_history (article_id, observed_at DESC, id DESC);
+
+CREATE TABLE article_screenshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    article_id INTEGER NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
+    media_sha256 TEXT NOT NULL REFERENCES media (sha256),
+    page_url TEXT NOT NULL,
+    captured_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_article_screenshots_article ON article_screenshots (article_id, captured_at DESC);
