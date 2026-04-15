@@ -404,6 +404,44 @@ export type ExpandArticleFromLinkResponse = ArticleDetailResponse & {
   unchanged: boolean;
 };
 
+export type ArticleScreenshotEntry = {
+  id: number;
+  captured_at: string;
+  media_sha256: string;
+  /** Path like `/api/media/{sha256}`. */
+  media_url: string;
+};
+
+export type ArchiveFullPageResponse = ArticleDetailResponse & {
+  unchanged: boolean;
+  /** Present after a successful capture (including unchanged duplicate bytes). */
+  screenshot?: ArticleScreenshotEntry | null;
+};
+
+function coerceScreenshotEntry(raw: unknown): ArticleScreenshotEntry | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const o = raw as Record<string, unknown>;
+  const id = Number(o.id);
+  if (!Number.isFinite(id)) return null;
+  return {
+    id,
+    captured_at: String(o.captured_at ?? ''),
+    media_sha256: String(o.media_sha256 ?? ''),
+    media_url: String(o.media_url ?? ''),
+  };
+}
+
+/** List Chromium PNG screenshots stored for an article (not RSS body versions). */
+export async function listArticleScreenshots(
+  id: number,
+): Promise<ArticleScreenshotEntry[]> {
+  const raw = await apiGet<unknown>(`/articles/${id}/screenshots`);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((row) => coerceScreenshotEntry(row))
+    .filter((x): x is ArticleScreenshotEntry => x != null);
+}
+
 /** Fetch article HTML from the item URL (same extractor as RSS “expand from link”) and store a new version. */
 export async function expandArticleFromLinkNow(
   id: number,
@@ -423,10 +461,10 @@ export async function expandArticleFromLinkNow(
   };
 }
 
-/** Save a headless Chromium PNG of the article URL (stored as /api/media/… + HTML wrapper). */
+/** Save a headless Chromium PNG of the article URL (`article_screenshots` + media; no new article_contents row). */
 export async function archiveArticleFullPageNow(
   id: number,
-): Promise<ExpandArticleFromLinkResponse> {
+): Promise<ArchiveFullPageResponse> {
   const raw = await apiPostJson<unknown>(`/articles/${id}/archive-full-page`, {});
   const o = raw as Record<string, unknown>;
   const article = coerceArticle(o.article ?? raw);
@@ -434,10 +472,12 @@ export async function archiveArticleFullPageNow(
     ? (o.versions as ArticleContentVersion[])
     : [];
   const telegram_reactions = coerceTelegramReactions(o.telegram_reactions);
+  const screenshot = coerceScreenshotEntry(o.screenshot);
   return {
     unchanged: Boolean(o.unchanged),
     article,
     versions,
+    ...(screenshot ? { screenshot } : {}),
     ...(telegram_reactions ? { telegram_reactions } : {}),
   };
 }

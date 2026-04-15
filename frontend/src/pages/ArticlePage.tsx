@@ -101,8 +101,13 @@ export function ArticlePage() {
       } else {
         setRemoteMsg(
           res.unchanged
-            ? 'Снимок совпадает с уже сохранённым (новая версия не создана).'
-            : 'Сохранён снимок страницы (Chromium): PNG в медиа-хранилище и новая версия ниже.',
+            ? 'Снимок совпадает с предыдущим (байты PNG те же; новая запись не добавлена).'
+            : 'Снимок страницы сохранён: открыта вкладка со списком снимков.',
+        );
+        window.open(
+          `/articles/${numId}/screenshots`,
+          '_blank',
+          'noopener,noreferrer',
         );
       }
     } catch (e) {
@@ -163,6 +168,14 @@ export function ArticlePage() {
             {link ? <span className="article-source-open">{link}</span> : null}
             {showPull ? (
               <div className="article-pull-from-page">
+                <Link
+                  to={`/articles/${article.id}/screenshots`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="muted small article-screenshots-link"
+                >
+                  Снимки страницы
+                </Link>
                 <label className="article-pull-mode-label">
                   <span className="muted">Тип загрузки</span>
                   <select
@@ -206,11 +219,6 @@ export function ArticlePage() {
         </div>
 
         <div className="body-versions">
-          <p className="body-versions-hint small muted">
-            <ins className="diff-legend diff-ins">green</ins> — added vs previous
-            version;{' '}
-            <del className="diff-legend diff-del">red</del> — removed.
-          </p>
           {versions.map((v, i) => (
             <VersionBlock
               key={v.id}

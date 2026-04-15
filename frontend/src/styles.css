@@ -509,6 +509,23 @@ input[type='checkbox'] {
   gap: 0.5rem 0.75rem;
 }
 
+.article-screenshots-link {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.article-screenshots-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.article-screenshot-preview {
+  margin-top: 0.5rem;
+}
+
 .article-pull-mode-label {
   display: flex;
   flex-direction: column;
