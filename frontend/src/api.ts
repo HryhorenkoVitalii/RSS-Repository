@@ -1,5 +1,8 @@
 export const API_PREFIX = '/api';
 
+/** Backend serves OpenAPI at GET /api/openapi.json (see `src/openapi.json`). */
+export const OPENAPI_SPEC_PATH = '/openapi.json';
+
 /** Must match `FULL_PAGE_HTML_MARKER` in `src/article_expand.rs`. */
 export const ARTICLE_FULL_PAGE_MARKER = '<!--rss-repository:full-page-html-->\n';
 
@@ -63,6 +66,22 @@ async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_PREFIX}${path}`, { headers: authHeaders() });
   const text = await res.text();
   return readJson<T>(path, res, text);
+}
+
+/** Matches `HealthResponse` from `src/routes/api/health.rs` (GET /api/health). */
+export type HealthResponse = {
+  ok: boolean;
+  database: 'ok' | 'error';
+  media_dir: 'ok' | 'missing' | 'not_a_directory';
+};
+
+export async function fetchHealth(): Promise<HealthResponse> {
+  return apiGet<HealthResponse>('/health');
+}
+
+/** Raw OpenAPI 3 document (for tooling or codegen). */
+export async function fetchOpenApiDocument(): Promise<unknown> {
+  return apiGet<unknown>(OPENAPI_SPEC_PATH);
 }
 
 async function apiDelete<T>(path: string): Promise<T> {
