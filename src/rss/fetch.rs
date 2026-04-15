@@ -4,6 +4,8 @@ use std::time::Duration;
 use reqwest::Url;
 use rss::Channel;
 
+use crate::browser_http::{headers_for, FetchProfile};
+
 const MAX_FEED_BYTES: usize = 10 * 1024 * 1024;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_ITEMS_PER_FEED: usize = 500;
@@ -89,8 +91,11 @@ pub async fn fetch_and_parse(
     feed_url: &str,
 ) -> Result<Channel, FeedFetchError> {
     let url = validate_feed_url(feed_url)?;
+    let headers = headers_for(FetchProfile::SyndicationFeed, url.as_str())
+        .map_err(|e| FeedFetchError::Parse(format!("заголовки HTTP: {e}")))?;
     let resp = client
         .get(url)
+        .headers(headers)
         .timeout(FETCH_TIMEOUT)
         .send()
         .await?

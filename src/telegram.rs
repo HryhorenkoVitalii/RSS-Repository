@@ -12,6 +12,7 @@ use reqwest::Url;
 use rss::{Channel, Guid, Item};
 use scraper::{ElementRef, Html, Selector};
 
+use crate::browser_http::{headers_for, FetchProfile};
 use crate::rss::{validate_feed_url, FeedFetchError};
 
 const MAX_HTML_BYTES: usize = 10 * 1024 * 1024;
@@ -217,7 +218,7 @@ fn parse_reactions(msg: ElementRef<'_>) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for span in block.select(&SEL_REACTION_SPAN) {
         let classes: Vec<&str> = span.value().classes().collect();
-        if classes.iter().any(|c| *c == "tgme_reaction_paid") {
+        if classes.contains(&"tgme_reaction_paid") {
             let count = span.text().collect::<String>();
             let count = count.trim().to_string();
             if !count.is_empty() {
@@ -281,7 +282,7 @@ fn extract_media_html(msg: ElementRef<'_>) -> String {
             .parent()
             .and_then(ElementRef::wrap)
             .and_then(|p| p.select(&SEL_VIDEO_DURATION).next())
-            .map(|e: ElementRef<'_>| escape_xml_text(&e.text().collect::<String>().trim()))
+            .map(|e: ElementRef<'_>| escape_xml_text(e.text().collect::<String>().trim()))
             .unwrap_or_default();
         let label = format!("▶ Video {duration}").trim().to_string();
         let label_esc = escape_xml_text(&label);
@@ -406,7 +407,7 @@ fn parse_page(html: &str, base_url: &str) -> Result<(Vec<ParsedPost>, Option<Str
 
         if let Some(numeric_id) = data_post.rsplit('/').next() {
             if numeric_id.chars().all(|c| c.is_ascii_digit()) {
-                let update = oldest_id.as_ref().map_or(true, |o| {
+                let update = oldest_id.as_ref().is_none_or(|o| {
                     numeric_id.parse::<u64>().ok() < o.parse::<u64>().ok()
                 });
                 if update {
@@ -448,8 +449,11 @@ pub async fn fetch_telegram_feed(
     let mut page_url = base_str.clone();
 
     while all.len() < max_items {
+        let headers = headers_for(FetchProfile::ArticleHtml, &page_url)
+            .map_err(|e| FeedFetchError::Parse(format!("заголовки HTTP: {e}")))?;
         let resp = client
             .get(&page_url)
+            .headers(headers)
             .timeout(FETCH_TIMEOUT)
             .send()
             .await?

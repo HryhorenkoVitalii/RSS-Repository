@@ -1,8 +1,15 @@
+mod env_util;
+mod browser_http;
+mod chromium_binary;
+mod screenshot_env;
+mod screenshot_trim;
 mod article_expand;
 mod db;
 mod error;
 mod ingest;
 mod media;
+mod chromium_cdp;
+mod page_screenshot;
 mod routes;
 mod rss;
 mod scheduler;
@@ -85,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let http = reqwest::Client::builder()
-        .user_agent(concat!("rss-repository/", env!("CARGO_PKG_VERSION")))
+        .user_agent(browser_http::default_user_agent_string())
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
 

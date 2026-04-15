@@ -1,5 +1,6 @@
 mod api;
 mod feed;
+pub(crate) mod poll_spawn;
 
 use std::env;
 use std::sync::Arc;

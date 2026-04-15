@@ -10,6 +10,8 @@ use crate::media;
 use crate::rss::{article_guid, fetch_and_parse, plain_fingerprint};
 use crate::telegram;
 
+type TelegramReactionsMap = HashMap<String, Vec<(String, String)>>;
+
 fn parse_pub_date(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc2822(s.trim())
         .ok()
@@ -30,7 +32,7 @@ pub async fn poll_feed(
     client: &reqwest::Client,
     feed: &Feed,
 ) -> Result<(), String> {
-    let (channel, tg_reactions): (rss::Channel, Option<HashMap<String, Vec<(String, String)>>>) =
+    let (channel, tg_reactions): (rss::Channel, Option<TelegramReactionsMap>) =
         if telegram::is_telegram_preview_url(&feed.url) {
             let max_items = feed
                 .telegram_max_items

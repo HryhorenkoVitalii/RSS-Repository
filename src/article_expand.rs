@@ -1,20 +1,16 @@
 //! Optional “title-only” RSS: fetch `item.link` HTML and keep main content as article body.
-//! Full-page snapshot: raw HTML with `FULL_PAGE_HTML_MARKER` for iframe display.
+//! `FULL_PAGE_HTML_MARKER` — legacy full-HTML archives (iframe `raw-html`); new archives use Chromium PNG.
 
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, REFERER, USER_AGENT};
 use reqwest::StatusCode;
 use reqwest::Url;
 use scraper::{Html, Selector};
-use sha2::{Digest, Sha256};
 
 use crate::rss::{plain_fingerprint, validate_feed_url, FeedFetchError};
 
 const MAX_PAGE_BYTES: usize = 3 * 1024 * 1024;
-/// Full-document archive (stored as-is, shown in a sandboxed iframe).
-const FULL_PAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Prepended to `article_contents.body` so the UI serves this version via `raw-html` in an iframe.
@@ -81,65 +77,20 @@ fn sanitize_fragment(html: &str) -> String {
     b.clean(html).to_string()
 }
 
-/// Many news sites return 403 to bare `reqwest` defaults; send a typical browser-like request.
-fn expand_page_headers(page_url: &str) -> HeaderMap {
-    let mut m = HeaderMap::new();
-    let _ = m.insert(
-        USER_AGENT,
-        HeaderValue::from_static(concat!(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ",
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )),
-    );
-    let _ = m.insert(
-        ACCEPT,
-        HeaderValue::from_static(
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        ),
-    );
-    let _ = m.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
-    let _ = m.insert(
-        "Sec-CH-UA",
-        HeaderValue::from_static(
-            r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
-        ),
-    );
-    let _ = m.insert("Sec-CH-UA-Mobile", HeaderValue::from_static("?0"));
-    let _ = m.insert(
-        "Sec-CH-UA-Platform",
-        HeaderValue::from_static("\"Windows\""),
-    );
-    let _ = m.insert("Sec-Fetch-Dest", HeaderValue::from_static("document"));
-    let _ = m.insert("Sec-Fetch-Mode", HeaderValue::from_static("navigate"));
-    let _ = m.insert("Sec-Fetch-User", HeaderValue::from_static("?1"));
-    let _ = m.insert("Sec-Fetch-Site", HeaderValue::from_static("cross-site"));
-    let _ = m.insert(
-        "Upgrade-Insecure-Requests",
-        HeaderValue::from_static("1"),
-    );
-
-    if let Ok(u) = Url::parse(page_url) {
-        if matches!(u.scheme(), "http" | "https") {
-            if let Some(host) = u.host_str() {
-                let origin = format!("{}://{}/", u.scheme(), host);
-                if let Ok(v) = HeaderValue::from_str(&origin) {
-                    let _ = m.insert(REFERER, v);
-                }
-            }
-        }
-    }
-    m
-}
-
 async fn fetch_page_bytes_capped(
     client: &reqwest::Client,
     page_url: &str,
     max_bytes: usize,
 ) -> Result<Vec<u8>, FeedFetchError> {
     validate_feed_url(page_url)?;
+    let headers = crate::browser_http::headers_for(
+        crate::browser_http::FetchProfile::ArticleHtml,
+        page_url,
+    )
+    .map_err(|e| FeedFetchError::Parse(format!("заголовки HTTP: {e}")))?;
     let resp = client
         .get(page_url)
-        .headers(expand_page_headers(page_url))
+        .headers(headers)
         .timeout(FETCH_TIMEOUT)
         .send()
         .await?;
@@ -162,52 +113,6 @@ async fn fetch_page_bytes_capped(
         return Err(FeedFetchError::TooLarge);
     }
     Ok(bytes.to_vec())
-}
-
-/// Insert `<base href="…">` so relative URLs in a saved document resolve like in the browser.
-pub fn inject_base_href_for_archive(html: &str, page_url: &str) -> String {
-    let esc = page_url
-        .trim()
-        .replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;");
-    let base_open = format!("<base href=\"{esc}\">");
-    let lc = html.to_ascii_lowercase();
-    if let Some(start) = lc.find("<head") {
-        if let Some(rel_gt) = html[start..].find('>') {
-            let p = start + rel_gt + 1;
-            return format!("{}{}{}", &html[..p], base_open, &html[p..]);
-        }
-    }
-    if let Some(start) = lc.find("<html") {
-        if let Some(rel_gt) = html[start..].find('>') {
-            let p = start + rel_gt + 1;
-            return format!(
-                "{}{}<head><meta charset=\"utf-8\">{}</head>{}",
-                &html[..p],
-                "",
-                base_open,
-                &html[p..]
-            );
-        }
-    }
-    format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">{base_open}</head><body>{html}</body></html>"
-    )
-}
-
-/// Raw HTML response bytes (UTF-8 lossy). Used for “full page archive” only.
-pub async fn fetch_full_page_html(client: &reqwest::Client, page_url: &str) -> Result<String, FeedFetchError> {
-    let bytes = fetch_page_bytes_capped(client, page_url, FULL_PAGE_MAX_BYTES).await?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
-}
-
-/// Content hash for a full-page snapshot (no media inlining — keeps bytes stable).
-pub fn full_page_archive_content_hash(body: &str) -> Vec<u8> {
-    let mut h = Sha256::new();
-    h.update(b"rss-repository:full-page-archive:v1:");
-    h.update(body.as_bytes());
-    h.finalize().to_vec()
 }
 
 pub async fn fetch_article_body_from_url(

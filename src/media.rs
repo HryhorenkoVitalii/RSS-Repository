@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use tokio::sync::Semaphore;
 
+use crate::browser_http::{headers_for, FetchProfile};
 use crate::error::AppError;
 
 static MEDIA_RE: OnceCell<Regex> = OnceCell::new();
@@ -76,8 +77,11 @@ pub async fn download_and_store(
     url: &str,
     dir: &Path,
 ) -> Result<DownloadedMedia, String> {
+    let headers = headers_for(FetchProfile::MediaAsset, url)
+        .map_err(|e| format!("заголовки HTTP: {e}"))?;
     let resp = client
         .get(url)
+        .headers(headers)
         .timeout(MEDIA_TIMEOUT)
         .send()
         .await
@@ -119,6 +123,53 @@ pub async fn download_and_store(
     Ok(DownloadedMedia {
         sha256: sha,
         mime_type: content_type,
+        file_size: bytes.len(),
+    })
+}
+
+/// Write `bytes` into `MEDIA_DIR` (if missing) and insert a `media` row (same layout as after HTTP download).
+pub async fn store_media_bytes(
+    write_lock: &Semaphore,
+    pool: &SqlitePool,
+    bytes: &[u8],
+    original_url: &str,
+    mime_type: &str,
+    dir: &std::path::Path,
+) -> Result<DownloadedMedia, AppError> {
+    if bytes.is_empty() {
+        return Err(AppError::BadRequest("empty media payload".into()));
+    }
+    if bytes.len() > MAX_MEDIA_BYTES {
+        return Err(AppError::BadRequest(format!(
+            "media exceeds {} bytes",
+            MAX_MEDIA_BYTES
+        )));
+    }
+    let sha = hash_bytes(bytes);
+    let ext = extension_from_mime(mime_type);
+    let path = file_path(dir, &sha, ext);
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                AppError::BadGateway(format!("media mkdir: {e}"))
+            })?;
+        }
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|e| AppError::BadGateway(format!("media write: {e}")))?;
+    }
+    save_media_record(
+        write_lock,
+        pool,
+        &sha,
+        original_url,
+        mime_type,
+        bytes.len() as i64,
+    )
+    .await?;
+    Ok(DownloadedMedia {
+        sha256: sha,
+        mime_type: mime_type.to_string(),
         file_size: bytes.len(),
     })
 }
@@ -190,7 +241,7 @@ pub fn rewrite_media_urls(html: &str, replacements: &[(String, String)]) -> Stri
 }
 
 /// Compute a combined hash of text content + media hashes (sorted for stability).
-pub fn combined_content_hash(text_canonical: &str, media_hashes: &mut Vec<String>) -> Vec<u8> {
+pub fn combined_content_hash(text_canonical: &str, media_hashes: &mut [String]) -> Vec<u8> {
     media_hashes.sort();
     let mut h = Sha256::new();
     h.update(text_canonical.as_bytes());
