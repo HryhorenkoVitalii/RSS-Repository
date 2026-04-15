@@ -133,7 +133,7 @@ podman run --rm -p 8080:8080 \
 - Логи: `podman logs -f rss-repository` (если запускал без `--rm` и с фиксированным именем).
 - Контейнер со скрипта использует имя **`rss-repository`**; если порт занят или контейнер завис, сначала: `podman stop rss-repository` или смени **`PORT`**.
 
-**Частые проблемы (разработка):** `ERR_CONNECTION_REFUSED` на :5173 — не запущен Vite. Данные не грузятся в UI — проверь, что API слушает и отдаёт `{"ok":true}` на `/api/health`. Порт **8080** занят локально — освободи или смени **`BIND_ADDR`** / **`PORT`**.
+**Частые проблемы (разработка):** `ERR_CONNECTION_REFUSED` на :5173 — не запущен Vite. Данные не грузятся в UI — проверь, что API слушает и на **`GET /api/health`** в JSON поле **`ok`** равно `true` (живость SQLite; отдельно **`database`** / **`media_dir`**). Порт **8080** занят локально — освободи или смени **`BIND_ADDR`** / **`PORT`**.
 
 Для ссылок в **`/feed.xml`** при dev с Vite удобно: **`PUBLIC_BASE_URL=http://127.0.0.1:5173`**. В контейнере по умолчанию скрипт передаёт `http://127.0.0.1:${PORT:-8080}`.
 
@@ -146,12 +146,17 @@ podman run --rm -p 8080:8080 \
 | `PUBLIC_BASE_URL` | `.env`, `-e` в `podman run` | Базовый URL для ссылок внутри `/feed.xml`; если пусто — берётся из заголовков запроса (`Host`, `X-Forwarded-*`) |
 | `FRONTEND_ORIGIN` | `.env` | Если задана — CORS только для этого origin; иначе для API допускаются все origins |
 | `RUST_LOG` | `.env`, контейнер | Фильтр логирования (`tracing`, например `info,rss_repository=debug`) |
+| `SCHEDULER_TICK_SECS` | `.env` | Базовый интервал тика планировщика (по умолчанию 10; к нему добавляется jitter до 25%) |
+| `SCHEDULER_MAX_FEEDS_PER_TICK` | `.env` | Максимум due-фидов, обрабатываемых за один тик (по умолчанию 25) |
+| `HTTP_RETRY_MAX_ATTEMPTS` | `.env` | Повторы исходящего GET при 408/429/5xx и сетевых ошибках (1–8, по умолчанию 3) |
+| `HTTP_RETRY_BASE_MS` | `.env` | Базовая задержка backoff в мс (50–10000, по умолчанию 300) |
 
 ## API (кратко)
 
 | Метод | Путь | Описание |
 |--------|------|----------|
-| GET | `/api/health` | Проверка живости |
+| GET | `/api/health` | Живость SQLite (`ok`, `database`); каталог медиа (`media_dir`, не влияет на `ok`) |
+| GET | `/api/openapi.json` | Черновой OpenAPI 3.0 (список основных путей) |
 | GET | `/api/feeds?page=` | Фиды (пагинация, 20 на страницу) |
 | GET | `/api/feeds/options` | `id` / `url` / `title` для фильтров (лёгкий ответ) |
 | POST | `/api/feeds` | JSON `{ "url", "poll_interval_seconds" }` |
@@ -185,7 +190,8 @@ podman run --rm -p 8080:8080 \
 ├── scripts/
 │   ├── dev.sh             # локально: API, затем после health — Vite
 │   └── podman-run.sh      # сборка образа и запуск контейнера
-├── src/                   # Axum, планировщик, ингест RSS, БД
+├── src/                   # `lib.rs` (логика + тесты), `main.rs` (тонкий вход), Axum, БД в `db/`
+├── tests/                 # интеграционные тесты роутера (SQLite in-memory + миграции)
 └── .env.example
 ```
 
