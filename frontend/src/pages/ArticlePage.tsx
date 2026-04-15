@@ -6,6 +6,7 @@ import {
   expandArticleFromLinkNow,
   fetchArticleArchiveBlobUrl,
   getArticle,
+  isChromiumScreenshotBody,
   isFullPageArchiveBody,
   type Article,
   type ArticleContentVersion,
@@ -100,8 +101,8 @@ export function ArticlePage() {
       } else {
         setRemoteMsg(
           res.unchanged
-            ? 'Полный HTML совпадает с уже сохранённым (новая версия не создана).'
-            : 'Сохранён полный HTML страницы (новая версия; ниже в iframe).',
+            ? 'Снимок совпадает с уже сохранённым (новая версия не создана).'
+            : 'Сохранён снимок страницы (Chromium): PNG в медиа-хранилище и новая версия ниже.',
         );
       }
     } catch (e) {
@@ -175,7 +176,7 @@ export function ArticlePage() {
                       Основной текст (вырезанный блок, как в RSS expand)
                     </option>
                     <option value="archive">
-                      Целая страница (полный HTML, до 8 МБ, просмотр в iframe)
+                      Снимок страницы (headless Chromium → PNG, как в браузере)
                     </option>
                   </select>
                 </label>
@@ -294,7 +295,9 @@ function VersionBlock({
   const fetched = formatDateTime(v.fetched_at);
   const label = versionLabel(index, total);
   const currFull = isFullPageArchiveBody(v.body);
+  const currShot = isChromiumScreenshotBody(v.body);
   const prevFull = prev != null && isFullPageArchiveBody(prev.body);
+  const prevShot = prev != null && isChromiumScreenshotBody(prev.body);
   const showArchiveIframe = currFull;
 
   let titleBlock: ReactNode = null;
@@ -310,7 +313,7 @@ function VersionBlock({
         />
       );
     }
-    if (!prevFull && !currFull) {
+    if (!prevFull && !currFull && !prevShot && !currShot) {
       const prevPlain = htmlToPlainText(prev.body);
       const nextPlain = htmlToPlainText(v.body);
       bodyHtml = inlineWordDiffHtml(prevPlain, nextPlain);
@@ -320,13 +323,16 @@ function VersionBlock({
   }
 
   const archiveNote =
-    currFull || prevFull ? (
+    currFull || prevFull || currShot || prevShot ? (
       <p className="muted small article-archive-note">
         {currFull
-          ? 'Полный HTML страницы в песочнице: стили и скрипты грузятся как у источника (ограничения браузера и CSP сайта могут что‑то сломать).'
+          ? 'Полный HTML в iframe: из сохранённой страницы убираются meta CSP/Permissions-Policy, чтобы подтянулись стили с сайта; переходы по ссылкам и отправка форм отключены.'
           : null}
-        {prev != null && (prevFull || currFull)
-          ? ' Построчное сравнение с прошлой версией для архива не строится.'
+        {currShot && !currFull
+          ? 'Снимок сделан headless Chromium (как при открытии страницы); высота ограничена окном браузера.'
+          : null}
+        {prev != null && (prevFull || currFull || prevShot || currShot)
+          ? ' Построчное сравнение с прошлой версией для этих режимов не строится.'
           : null}
       </p>
     ) : null;
@@ -343,7 +349,11 @@ function VersionBlock({
       <summary className="body-version-summary">
         <span className="body-version-summary-main">
           {label}
-          {currFull ? <span className="badge article-archive-badge">HTML archive</span> : null}
+          {currFull ? (
+            <span className="badge article-archive-badge">HTML archive</span>
+          ) : currShot ? (
+            <span className="badge article-archive-badge">Chromium PNG</span>
+          ) : null}
           {index > 0 ? (
             <span className="muted small"> (vs version {index})</span>
           ) : null}
@@ -358,7 +368,7 @@ function VersionBlock({
         {archiveNote}
         {showArchiveIframe ? (
           <ArchiveIframePreview articleId={articleId} contentId={v.id} />
-        ) : prev != null && (prevFull || currFull) ? (
+        ) : prev != null && (prevFull || currFull || prevShot || currShot) ? (
           <div
             className="body body--diff"
             dangerouslySetInnerHTML={{ __html: domPurifyArticle(v.body) }}

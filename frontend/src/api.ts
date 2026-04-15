@@ -7,6 +7,14 @@ export function isFullPageArchiveBody(body: string): boolean {
   return body.startsWith(ARTICLE_FULL_PAGE_MARKER);
 }
 
+/** Must match `CHROMIUM_SCREENSHOT_MARKER` in `src/page_screenshot.rs`. */
+export const ARTICLE_CHROMIUM_SCREENSHOT_MARKER =
+  '<!--rss-repository:chromium-screenshot-->\n';
+
+export function isChromiumScreenshotBody(body: string): boolean {
+  return body.startsWith(ARTICLE_CHROMIUM_SCREENSHOT_MARKER);
+}
+
 function getApiKey(): string | null {
   return localStorage.getItem('rss_api_key');
 }
@@ -396,7 +404,7 @@ export async function expandArticleFromLinkNow(
   };
 }
 
-/** Save the full HTML document from the article URL (web-archive style; shown in a sandboxed iframe). */
+/** Save a headless Chromium PNG of the article URL (stored as /api/media/… + HTML wrapper). */
 export async function archiveArticleFullPageNow(
   id: number,
 ): Promise<ExpandArticleFromLinkResponse> {

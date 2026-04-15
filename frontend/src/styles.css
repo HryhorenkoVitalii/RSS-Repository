@@ -858,6 +858,7 @@ button.poll-error {
   width: 100%;
   aspect-ratio: 16 / 10;
   object-fit: cover;
+  object-position: top center;
   display: block;
   background: var(--hover);
 }

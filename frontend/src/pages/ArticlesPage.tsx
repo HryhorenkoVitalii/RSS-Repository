@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
+  isChromiumScreenshotBody,
   isFullPageArchiveBody,
   listAllFeeds,
   listArticles,
@@ -25,7 +26,8 @@ function parseViewMode(raw: string | null): ArticleViewMode {
 
 /** First usable image URL from stored article HTML (img src or video poster). */
 function firstImageUrlFromArticle(html: string): string | null {
-  if (!html || isFullPageArchiveBody(html)) return null;
+  // Полностраничный PNG — слишком высокий для превью; cover обрезает «не туда» и часто даёт чёрные полосы.
+  if (!html || isFullPageArchiveBody(html) || isChromiumScreenshotBody(html)) return null;
   const imgRe = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
   let m: RegExpExecArray | null;
   while ((m = imgRe.exec(html)) !== null) {
