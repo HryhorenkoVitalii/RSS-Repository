@@ -30,3 +30,15 @@ export function singleFeedRssPath(feedId: number): string {
 export function singleFeedRssAbsoluteUrl(feedId: number): string {
   return `${window.location.origin}${singleFeedRssPath(feedId)}`;
 }
+
+/** Stored feed URL is canonical Telegram preview (`/s/`). */
+export function isTelegramFeedUrl(url: string): boolean {
+  try {
+    const u = new URL(url.trim());
+    const h = u.hostname.replace(/^www\./i, '').toLowerCase();
+    if (h !== 't.me' && h !== 'telegram.me') return false;
+    return u.pathname.startsWith('/s/');
+  } catch {
+    return false;
+  }
+}

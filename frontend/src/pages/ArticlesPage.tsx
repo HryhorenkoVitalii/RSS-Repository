@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { listAllFeeds, listArticles, type Article, type Feed } from '../api';
+import {
+  isFullPageArchiveBody,
+  listAllFeeds,
+  listArticles,
+  type Article,
+  type Feed,
+} from '../api';
+import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
 import { feedRssPath } from '../feedRss';
 import { formatDateTime } from '../formatTime';
 import { PaginationBar } from '../PaginationBar';
@@ -10,6 +17,42 @@ function parseFeedIds(raw: string | null): string[] {
   return raw.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+type ArticleViewMode = 'list' | 'tiles';
+
+function parseViewMode(raw: string | null): ArticleViewMode {
+  return raw === 'tiles' ? 'tiles' : 'list';
+}
+
+/** First usable image URL from stored article HTML (img src or video poster). */
+function firstImageUrlFromArticle(html: string): string | null {
+  if (!html || isFullPageArchiveBody(html)) return null;
+  const imgRe = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null) {
+    const u = m[1].trim().replace(/&amp;/g, '&');
+    if (u.startsWith('data:')) continue;
+    if (
+      u.startsWith('http://') ||
+      u.startsWith('https://') ||
+      u.startsWith('/')
+    ) {
+      return u;
+    }
+  }
+  const poster = /<video\b[^>]*\bposter\s*=\s*["']([^"']+)["']/i.exec(html);
+  if (poster) {
+    const u = poster[1].trim().replace(/&amp;/g, '&');
+    if (
+      u.startsWith('http://') ||
+      u.startsWith('https://') ||
+      u.startsWith('/')
+    ) {
+      return u;
+    }
+  }
+  return null;
+}
+
 export function ArticlesPage() {
   const [search, setSearch] = useSearchParams();
   const feedIds = parseFeedIds(search.get('feed_id'));
@@ -17,6 +60,7 @@ export function ArticlesPage() {
   const page = Math.max(0, Number(search.get('page') ?? '0') || 0);
   const dateFrom = search.get('date_from') ?? '';
   const dateTo = search.get('date_to') ?? '';
+  const viewMode = parseViewMode(search.get('view'));
 
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [articles, setArticles] = useState<Article[]>([]);
@@ -232,21 +276,53 @@ export function ArticlesPage() {
       <div className="card">
         <div className="card-head">
           <h2 className="card-title">Articles</h2>
-          {!loading && <span className="muted small">{total} total</span>}
+          <div className="article-list-toolbar">
+            {!loading ? <span className="muted small">{total} total</span> : null}
+            <div className="article-view-toggle" role="group" aria-label="Article layout">
+              <button
+                type="button"
+                className={viewMode === 'list' ? 'is-active' : ''}
+                onClick={() => setParam('view', null)}
+                aria-pressed={viewMode === 'list'}
+              >
+                List
+              </button>
+              <button
+                type="button"
+                className={viewMode === 'tiles' ? 'is-active' : ''}
+                onClick={() => setParam('view', 'tiles')}
+                aria-pressed={viewMode === 'tiles'}
+              >
+                Tiles
+              </button>
+            </div>
+          </div>
         </div>
         {loading ? (
           <p className="muted">Loading…</p>
         ) : (
           <>
-            <ul className="article-list">
-              {articles.length === 0 ? (
-                <li className="muted">No articles match the current filters.</li>
-              ) : (
-                articles.map((a) => (
-                  <ArticleRow key={a.id} article={a} feedName={feedMap.get(a.feed_id)} />
-                ))
-              )}
-            </ul>
+            {viewMode === 'tiles' ? (
+              <div className="article-tiles">
+                {articles.length === 0 ? (
+                  <p className="muted article-tiles-empty">No articles match the current filters.</p>
+                ) : (
+                  articles.map((a) => (
+                    <ArticleTile key={a.id} article={a} feedName={feedMap.get(a.feed_id)} />
+                  ))
+                )}
+              </div>
+            ) : (
+              <ul className="article-list">
+                {articles.length === 0 ? (
+                  <li className="muted">No articles match the current filters.</li>
+                ) : (
+                  articles.map((a) => (
+                    <ArticleRow key={a.id} article={a} feedName={feedMap.get(a.feed_id)} />
+                  ))
+                )}
+              </ul>
+            )}
             <PaginationBar
               page={page}
               totalPages={totalPages}
@@ -263,6 +339,61 @@ export function ArticlesPage() {
   );
 }
 
+function ArticleTileCover({ src, title }: { src: string | null; title: string }) {
+  const [broken, setBroken] = useState(false);
+  const showImg = src && !broken;
+  if (!showImg) {
+    return (
+      <div className="article-tile-placeholder">
+        <span className="article-tile-placeholder-title">{title || '(no title)'}</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      className="article-tile-img"
+      loading="lazy"
+      decoding="async"
+      onError={() => setBroken(true)}
+    />
+  );
+}
+
+function ArticleTile({ article: a, feedName }: { article: Article; feedName?: string }) {
+  const imgUrl = useMemo(() => firstImageUrlFromArticle(a.body), [a.body]);
+  const published = formatDateTime(a.published_at ?? undefined);
+  const fetched = formatDateTime(a.last_fetched_at);
+  const versions =
+    a.content_version_count > 1 ? (
+      <span className="badge">{a.content_version_count} ver</span>
+    ) : null;
+  const rx = a.telegram_reactions ?? [];
+
+  return (
+    <article className="article-tile">
+      <Link to={`/articles/${a.id}`} className="article-tile-link">
+        <ArticleTileCover src={imgUrl} title={a.title || '(no title)'} />
+        <div className="article-tile-body">
+          <h3 className="article-tile-heading">{a.title || '(no title)'}</h3>
+          {versions ? <div className="article-tile-badges">{versions}</div> : null}
+        </div>
+      </Link>
+      {rx.length > 0 ? (
+        <div className="article-tile-reactions">
+          <TelegramReactionsStrip articleId={a.id} reactions={rx} />
+        </div>
+      ) : null}
+      <div className="article-tile-meta meta">
+        {feedName && <span>{feedName}</span>}
+        <span title={published.title}>{published.display}</span>
+        <span title={fetched.title}>Fetched {fetched.display}</span>
+      </div>
+    </article>
+  );
+}
+
 function ArticleRow({ article: a, feedName }: { article: Article; feedName?: string }) {
   const published = formatDateTime(a.published_at ?? undefined);
   const fetched = formatDateTime(a.last_fetched_at);
@@ -270,6 +401,7 @@ function ArticleRow({ article: a, feedName }: { article: Article; feedName?: str
     a.content_version_count > 1 ? (
       <span className="badge">{a.content_version_count} ver</span>
     ) : null;
+  const rx = a.telegram_reactions ?? [];
 
   return (
     <li>
@@ -277,6 +409,11 @@ function ArticleRow({ article: a, feedName }: { article: Article; feedName?: str
         <Link to={`/articles/${a.id}`}>{a.title || '(no title)'}</Link>
         {versions}
       </div>
+      {rx.length > 0 ? (
+        <div className="article-row-reactions">
+          <TelegramReactionsStrip articleId={a.id} reactions={rx} />
+        </div>
+      ) : null}
       <div className="meta">
         {feedName && <span>{feedName}</span>}
         <span title={published.title}>{published.display}</span>
