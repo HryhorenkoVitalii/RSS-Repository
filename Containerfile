@@ -18,8 +18,13 @@ RUN cargo build --locked --release
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Chromium: «архив полной страницы» (PNG). В контейнере без привилегий нужен --no-sandbox (см. CHROMIUM_NO_SANDBOX).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends nginx ca-certificates \
+  && apt-get install -y --no-install-recommends \
+       nginx \
+       ca-certificates \
+       chromium \
+       fonts-liberation \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /var/lib/nginx/body /var/log/nginx /data /tmp/nginx \
   && chown -R www-data:www-data /var/lib/nginx /var/log/nginx /usr/share/nginx/html /data /tmp/nginx
@@ -33,6 +38,9 @@ RUN chmod +x /entrypoint.sh /rss-repository
 ENV DATABASE_URL=sqlite:/data/rss_repository.db
 ENV BIND_ADDR=127.0.0.1:7878
 ENV RUST_LOG=info,rss_repository=info
+# Пользователь www-data не может использовать setuid sandbox Chromium.
+ENV CHROMIUM_PATH=/usr/bin/chromium
+ENV CHROMIUM_NO_SANDBOX=1
 
 EXPOSE 8080
 VOLUME /data

@@ -58,6 +58,8 @@ async fn capture_url_to_png_cli(page_url: &str, out_png: &Path) -> Result<(), St
     // Chromium treats `{w},{h}` as a second navigation target → exit 13 “Multiple targets…”.
     cmd.arg("--headless=new")
         .arg("--disable-gpu")
+        // Podman/Docker: маленький /dev/shm → падения/зависания без этого флага.
+        .arg("--disable-dev-shm-usage")
         .arg("--hide-scrollbars")
         .arg(format!("--window-size={w},{h}"))
         .arg(format!("--screenshot={}", out_png.display()))

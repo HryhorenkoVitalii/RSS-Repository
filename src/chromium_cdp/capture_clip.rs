@@ -43,6 +43,7 @@ pub async fn capture_page_clip_png(page_url: &str, out_png: &Path) -> Result<(),
     let mut cmd = Command::new(&bin);
     cmd.arg("--headless=new")
         .arg("--disable-gpu")
+        .arg("--disable-dev-shm-usage")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg(format!("--user-data-dir={}", profile.display()))

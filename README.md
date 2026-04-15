@@ -74,6 +74,7 @@ cd frontend && npm install && npm run build
 |-----------|------|
 | **nginx** | Слушает **8080** (единая точка входа): отдаёт SPA из `frontend/dist`, проксирует `/api/` и `/feed.xml` на бекенд. |
 | **rss-repository** | Слушает только **127.0.0.1:7878** внутри контейнера (не публикуется наружу). |
+| **Chromium** | В образе установлен пакет **`chromium`** (Debian); для скриншотов заданы **`CHROMIUM_PATH=/usr/bin/chromium`** и **`CHROMIUM_NO_SANDBOX=1`** (процесс под `www-data` без sandbox). |
 | **Каталог `/data`** | В контейнере здесь SQLite: `DATABASE_URL=sqlite:/data/rss_repository.db`. На хост этот путь монтируется **bind mount**’ом — файл БД живёт **вне** слоя контейнера и не пропадает при `podman rm` / новом образе. |
 
 ### Одна команда
