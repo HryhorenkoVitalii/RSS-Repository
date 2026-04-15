@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sqlx::SqlitePool;
 use tokio::sync::Semaphore;
@@ -7,7 +7,33 @@ use tokio::sync::Semaphore;
 use crate::db;
 use crate::ingest::poll_feed;
 
-const TICK_SECS: u64 = 10;
+fn tick_base_secs() -> u64 {
+    std::env::var("SCHEDULER_TICK_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(10)
+        .clamp(5, 3600)
+}
+
+fn max_feeds_per_tick() -> usize {
+    std::env::var("SCHEDULER_MAX_FEEDS_PER_TICK")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(25)
+        .clamp(1, 500)
+}
+
+/// Пауза до следующего тика: базовый интервал + псевдослучайный jitter до 25% (меньше «стада» при старте).
+fn sleep_until_next_tick() -> Duration {
+    let base = tick_base_secs().saturating_mul(1000);
+    let jitter_max = (base / 4).max(1);
+    let r = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let jitter = r % jitter_max;
+    Duration::from_millis(base.saturating_add(jitter))
+}
 
 pub async fn run(
     pool: SqlitePool,
@@ -16,7 +42,7 @@ pub async fn run(
     sem: Arc<Semaphore>,
 ) {
     loop {
-        tokio::time::sleep(Duration::from_secs(TICK_SECS)).await;
+        tokio::time::sleep(sleep_until_next_tick()).await;
         let feeds = match db::feeds_due_for_poll(&pool).await {
             Ok(f) => f,
             Err(e) => {
@@ -27,7 +53,13 @@ pub async fn run(
         if feeds.is_empty() {
             continue;
         }
-        tracing::debug!(count = feeds.len(), "polling due feeds");
+        let cap = max_feeds_per_tick();
+        let feeds: Vec<_> = feeds.into_iter().take(cap).collect();
+        if feeds.len() == cap {
+            tracing::debug!(count = feeds.len(), cap, "polling due feeds (capped)");
+        } else {
+            tracing::debug!(count = feeds.len(), "polling due feeds");
+        }
         for feed in feeds {
             let permit = match sem.clone().acquire_owned().await {
                 Ok(p) => p,

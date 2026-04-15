@@ -4,6 +4,7 @@ mod articles;
 mod feeds;
 mod health;
 mod media_serve;
+mod openapi;
 mod polling;
 
 use axum::routing::{delete, get, post};
@@ -14,6 +15,7 @@ use super::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(health::health))
+        .route("/openapi.json", get(openapi::openapi_json))
         .route("/feeds/events", get(polling::poll_events_sse))
         .route("/feeds/poll-all", post(polling::poll_all_feeds))
         .route("/feeds/options", get(feeds::list_feed_options))

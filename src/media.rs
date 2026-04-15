@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 
 use crate::browser_http::{headers_for, FetchProfile};
 use crate::error::AppError;
+use crate::http_retry;
 
 static MEDIA_RE: OnceCell<Regex> = OnceCell::new();
 
@@ -77,17 +78,19 @@ pub async fn download_and_store(
     url: &str,
     dir: &Path,
 ) -> Result<DownloadedMedia, String> {
-    let headers = headers_for(FetchProfile::MediaAsset, url)
+    let url_owned = url.to_string();
+    let headers = headers_for(FetchProfile::MediaAsset, url_owned.as_str())
         .map_err(|e| format!("заголовки HTTP: {e}"))?;
-    let resp = client
-        .get(url)
-        .headers(headers)
-        .timeout(MEDIA_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| format!("media fetch: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("media fetch status: {e}"))?;
+    let resp = http_retry::send_with_retries(|| {
+        client
+            .get(url_owned.as_str())
+            .headers(headers.clone())
+            .timeout(MEDIA_TIMEOUT)
+    })
+    .await
+    .map_err(|e| format!("media fetch: {e}"))?
+    .error_for_status()
+    .map_err(|e| format!("media fetch status: {e}"))?;
 
     let content_type = resp
         .headers()

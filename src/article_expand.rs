@@ -8,6 +8,7 @@ use reqwest::StatusCode;
 use reqwest::Url;
 use scraper::{Html, Selector};
 
+use crate::http_retry;
 use crate::rss::{plain_fingerprint, validate_feed_url, FeedFetchError};
 
 const MAX_PAGE_BYTES: usize = 3 * 1024 * 1024;
@@ -83,17 +84,19 @@ async fn fetch_page_bytes_capped(
     max_bytes: usize,
 ) -> Result<Vec<u8>, FeedFetchError> {
     validate_feed_url(page_url)?;
+    let page_owned = page_url.to_string();
     let headers = crate::browser_http::headers_for(
         crate::browser_http::FetchProfile::ArticleHtml,
-        page_url,
+        page_owned.as_str(),
     )
     .map_err(|e| FeedFetchError::Parse(format!("заголовки HTTP: {e}")))?;
-    let resp = client
-        .get(page_url)
-        .headers(headers)
-        .timeout(FETCH_TIMEOUT)
-        .send()
-        .await?;
+    let resp = http_retry::send_with_retries(|| {
+        client
+            .get(page_owned.as_str())
+            .headers(headers.clone())
+            .timeout(FETCH_TIMEOUT)
+    })
+    .await?;
     let status = resp.status();
     let bytes = resp.bytes().await?;
     if !status.is_success() {

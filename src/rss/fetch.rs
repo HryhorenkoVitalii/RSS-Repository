@@ -5,6 +5,7 @@ use reqwest::Url;
 use rss::Channel;
 
 use crate::browser_http::{headers_for, FetchProfile};
+use crate::http_retry;
 
 const MAX_FEED_BYTES: usize = 10 * 1024 * 1024;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(45);
@@ -91,15 +92,17 @@ pub async fn fetch_and_parse(
     feed_url: &str,
 ) -> Result<Channel, FeedFetchError> {
     let url = validate_feed_url(feed_url)?;
-    let headers = headers_for(FetchProfile::SyndicationFeed, url.as_str())
+    let url_owned = url.to_string();
+    let headers = headers_for(FetchProfile::SyndicationFeed, url_owned.as_str())
         .map_err(|e| FeedFetchError::Parse(format!("заголовки HTTP: {e}")))?;
-    let resp = client
-        .get(url)
-        .headers(headers)
-        .timeout(FETCH_TIMEOUT)
-        .send()
-        .await?
-        .error_for_status()?;
+    let resp = http_retry::send_with_retries(|| {
+        client
+            .get(url_owned.as_str())
+            .headers(headers.clone())
+            .timeout(FETCH_TIMEOUT)
+    })
+    .await?
+    .error_for_status()?;
     let bytes = resp.bytes().await?;
     if bytes.len() > MAX_FEED_BYTES {
         return Err(FeedFetchError::TooLarge);

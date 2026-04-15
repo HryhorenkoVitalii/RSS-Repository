@@ -3,6 +3,10 @@ name = "rss-repository"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "rss_repository"
+path = "src/lib.rs"
+
 [dependencies]
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
@@ -29,3 +33,6 @@ scraper = "0.22"
 tokio-tungstenite = "0.24"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

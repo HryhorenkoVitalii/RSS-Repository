@@ -1,0 +1,116 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "RSS Repository API",
+    "version": "0.1.0",
+    "description": "JSON under /api; RSS 2.0 at /feed.xml. Responses include X-Request-Id."
+  },
+  "servers": [{ "url": "/", "description": "Same origin or reverse proxy" }],
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": ["ok", "database", "media_dir"],
+        "properties": {
+          "ok": { "type": "boolean", "description": "SQLite liveness (SELECT 1)" },
+          "database": { "type": "string", "enum": ["ok", "error"] },
+          "media_dir": {
+            "type": "string",
+            "enum": ["ok", "missing", "not_a_directory"],
+            "description": "MEDIA_DIR check; informational"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "properties": { "error": { "type": "string" } }
+      }
+    }
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health (SQLite + media directory)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "summary": "This OpenAPI document",
+        "responses": { "200": { "description": "OpenAPI JSON" } }
+      }
+    },
+    "/api/feeds/events": {
+      "get": { "summary": "SSE poll results", "responses": { "200": { "description": "text/event-stream" } } }
+    },
+    "/api/feeds/poll-all": {
+      "post": { "summary": "Poll all feeds", "responses": { "202": { "description": "Accepted" } } }
+    },
+    "/api/feeds/options": {
+      "get": { "summary": "Feed id/url/title for filters", "responses": { "200": { "description": "JSON array" } } }
+    },
+    "/api/feeds": {
+      "get": { "summary": "List feeds (paginated)", "parameters": [{ "name": "page", "in": "query", "schema": { "type": "integer" } }] },
+      "post": { "summary": "Create feed", "responses": { "201": { "description": "Created" } } }
+    },
+    "/api/feeds/{id}": {
+      "delete": { "summary": "Delete feed", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/feeds/{id}/interval": {
+      "post": { "summary": "Update poll interval", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/feeds/{id}/telegram-max-items": {
+      "post": { "summary": "Update Telegram max items", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/feeds/{id}/expand-from-link": {
+      "post": { "summary": "Update expand-from-link flag", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/feeds/{id}/poll": {
+      "post": { "summary": "Poll one feed now", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }], "responses": { "202": { "description": "Accepted" } } }
+    },
+    "/api/articles": {
+      "get": { "summary": "List articles", "description": "Query: feed_id, modified_only, page, date_from, date_to" }
+    },
+    "/api/articles/{id}": {
+      "get": { "summary": "Article detail + versions", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/articles/{article_id}/contents/{content_id}/raw-html": {
+      "get": {
+        "summary": "Raw HTML for full-page archive version",
+        "parameters": [
+          { "name": "article_id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "content_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ]
+      }
+    },
+    "/api/articles/{id}/expand-from-link": {
+      "post": { "summary": "Fetch article HTML from link", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/articles/{id}/archive-full-page": {
+      "post": { "summary": "Archive as Chromium PNG", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/articles/{id}/telegram-reactions": {
+      "get": { "summary": "Telegram reactions snapshot + history", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
+    "/api/media/{hash}": {
+      "get": {
+        "summary": "Media bytes by SHA-256 hex (64 chars)",
+        "parameters": [{ "name": "hash", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" } }],
+        "responses": {
+          "200": { "description": "Binary; Cache-Control immutable; ETag" },
+          "304": { "description": "If-None-Match matched" }
+        }
+      }
+    },
+    "/feed.xml": {
+      "get": { "summary": "RSS 2.0 export", "description": "Not under /api; same host." }
+    }
+  }
+}

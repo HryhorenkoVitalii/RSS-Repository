@@ -84,7 +84,10 @@ async fn require_api_key(
         None => return next.run(req).await,
     };
     let path = req.uri().path();
-    if path == "/api/health" || path.starts_with("/api/media/") {
+    if path == "/api/health"
+        || path == "/api/openapi.json"
+        || path.starts_with("/api/media/")
+    {
         return next.run(req).await;
     }
 
@@ -128,6 +131,26 @@ async fn security_headers(req: Request<Body>, next: Next) -> Response {
     res
 }
 
+async fn request_id_middleware(req: Request<Body>, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let id = format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let short = if id.len() > 24 {
+        id[id.len() - 24..].to_string()
+    } else {
+        id
+    };
+    if let Ok(hv) = HeaderValue::from_str(&short) {
+        res.headers_mut().insert(header::HeaderName::from_static("x-request-id"), hv);
+    }
+    res
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api", api::routes())
@@ -142,6 +165,7 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             log_http_request,
         ))
+        .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)
 }
 

@@ -7,25 +7,6 @@ use tokio::sync::Semaphore;
 use crate::error::AppError;
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
-pub struct Feed {
-    pub id: i64,
-    pub url: String,
-    pub title: Option<String>,
-    pub poll_interval_seconds: i32,
-    /// Telegram preview only: max posts to parse per poll (1–500). Ignored for RSS URLs.
-    pub telegram_max_items: i32,
-    /// RSS: when plain-text body from the feed is very short, fetch HTML from `item.link`.
-    pub expand_article_from_link: bool,
-    pub created_at: DateTime<Utc>,
-    pub last_polled_at: Option<DateTime<Utc>>,
-}
-
-/// Article: current text is the latest `article_contents` row by `id` for this `articles.id`
-/// (`article_contents.article_id`).
-/// `content_version_count` — number of stored versions in `article_contents`.
-/// `previous_body` — second-to-last version (for RSS “was / now” summary).
-/// `link` — original URL when `guid` itself is an http(s) URL.
-#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Article {
     pub id: i64,
     pub feed_id: i64,
@@ -35,15 +16,12 @@ pub struct Article {
     pub published_at: Option<DateTime<Utc>>,
     pub first_seen_at: DateTime<Utc>,
     pub last_fetched_at: DateTime<Utc>,
-    /// When the currently shown body snapshot was stored (new/changed version).
     pub latest_content_fetched_at: DateTime<Utc>,
     pub content_version_count: i64,
     pub previous_body: Option<String>,
     pub link: Option<String>,
 }
 
-/// One stored text version (order by increasing `id`).
-/// Current Telegram reaction counts for one article (snapshot).
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct ArticleReactionSnapshot {
     pub emoji: String,
@@ -63,7 +41,6 @@ pub struct ArticleContentVersion {
     pub id: i64,
     pub title: String,
     pub body: String,
-    /// Stored `fetched_at`, or `articles.last_fetched_at` when the row had no timestamp yet.
     pub fetched_at: DateTime<Utc>,
 }
 
@@ -90,216 +67,6 @@ INNER JOIN article_contents cur ON cur.id = (
   SELECT MAX(id) FROM article_contents c2 WHERE c2.article_id = a.id
 )
 "#;
-
-pub async fn list_feeds(pool: &SqlitePool) -> Result<Vec<Feed>, AppError> {
-    let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
-           FROM feeds ORDER BY id"#,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
-}
-
-pub async fn count_feeds(pool: &SqlitePool) -> Result<i64, AppError> {
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM feeds")
-        .fetch_one(pool)
-        .await?;
-    Ok(n)
-}
-
-pub async fn list_feeds_page(
-    pool: &SqlitePool,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Feed>, AppError> {
-    let limit = limit.clamp(1, 200);
-    let offset = offset.max(0);
-    let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
-           FROM feeds ORDER BY id LIMIT ? OFFSET ?"#,
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
-}
-
-/// All feeds as id/url/title for filter dropdowns (small payload).
-#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
-pub struct FeedOption {
-    pub id: i64,
-    pub url: String,
-    pub title: Option<String>,
-}
-
-pub async fn list_feed_options(pool: &SqlitePool) -> Result<Vec<FeedOption>, AppError> {
-    let rows = sqlx::query_as::<_, FeedOption>(r#"SELECT id, url, title FROM feeds ORDER BY id"#)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows)
-}
-
-/// Feeds whose stored title matches `title` (trimmed, case-insensitive). Empty titles are skipped.
-pub async fn find_feeds_by_title_ci(pool: &SqlitePool, title: &str) -> Result<Vec<Feed>, AppError> {
-    let needle = title.trim();
-    if needle.is_empty() {
-        return Ok(vec![]);
-    }
-    let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
-           FROM feeds
-           WHERE title IS NOT NULL
-             AND TRIM(title) != ''
-             AND LOWER(TRIM(title)) = LOWER(?)"#,
-    )
-    .bind(needle)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
-}
-
-pub async fn get_feed(pool: &SqlitePool, id: i64) -> Result<Option<Feed>, AppError> {
-    let row = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
-           FROM feeds WHERE id = ?"#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row)
-}
-
-pub async fn create_feed(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    url: &str,
-    poll_interval_seconds: i32,
-    telegram_max_items: i32,
-    expand_article_from_link: bool,
-) -> Result<i64, AppError> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    let id = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO feeds (url, poll_interval_seconds, telegram_max_items, expand_article_from_link)
-           VALUES (?, ?, ?, ?)
-           RETURNING id"#,
-    )
-    .bind(url)
-    .bind(poll_interval_seconds)
-    .bind(telegram_max_items)
-    .bind(expand_article_from_link)
-    .fetch_one(pool)
-    .await?;
-    Ok(id)
-}
-
-pub async fn delete_feed(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    id: i64,
-) -> Result<bool, AppError> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    let r = sqlx::query("DELETE FROM feeds WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(r.rows_affected() > 0)
-}
-
-pub async fn update_feed_interval(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    id: i64,
-    poll_interval_seconds: i32,
-) -> Result<bool, AppError> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    let r = sqlx::query(r#"UPDATE feeds SET poll_interval_seconds = ? WHERE id = ?"#)
-        .bind(poll_interval_seconds)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(r.rows_affected() > 0)
-}
-
-pub async fn update_feed_telegram_max_items(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    id: i64,
-    telegram_max_items: i32,
-) -> Result<bool, AppError> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    let r = sqlx::query(r#"UPDATE feeds SET telegram_max_items = ? WHERE id = ?"#)
-        .bind(telegram_max_items)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(r.rows_affected() > 0)
-}
-
-pub async fn update_feed_expand_article_from_link(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    id: i64,
-    expand_article_from_link: bool,
-) -> Result<bool, AppError> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    let r = sqlx::query(r#"UPDATE feeds SET expand_article_from_link = ? WHERE id = ?"#)
-        .bind(expand_article_from_link)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(r.rows_affected() > 0)
-}
-
-pub async fn update_feed_meta(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    id: i64,
-    title: Option<&str>,
-    last_polled_at: DateTime<Utc>,
-) -> Result<(), AppError> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    sqlx::query(r#"UPDATE feeds SET title = COALESCE(?, title), last_polled_at = ? WHERE id = ?"#)
-        .bind(title)
-        .bind(last_polled_at)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-/// Feeds that need polling: never polled, or interval elapsed.
-pub async fn feeds_due_for_poll(pool: &SqlitePool) -> Result<Vec<Feed>, AppError> {
-    let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
-           FROM feeds
-           WHERE last_polled_at IS NULL
-              OR (CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', last_polled_at) AS INTEGER))
-                 >= poll_interval_seconds"#,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
-}
 
 pub struct UpsertArticle<'a> {
     pub feed_id: i64,
@@ -483,7 +250,6 @@ pub async fn upsert_article(
     Ok(())
 }
 
-/// Current reaction rows for many articles (for list API).
 pub async fn list_article_reaction_snapshots_bulk(
     pool: &SqlitePool,
     article_ids: &[i64],
@@ -551,7 +317,6 @@ pub struct ArticleFilter {
     pub feed_ids: Vec<i64>,
     pub only_modified: bool,
     pub last_fetched_from: Option<DateTime<Utc>>,
-    /// Exclusive upper bound (start of day after `date_to`).
     pub last_fetched_before: Option<DateTime<Utc>>,
 }
 
@@ -600,7 +365,6 @@ pub async fn list_articles(
     b.push(ARTICLE_SELECT);
     b.push(ARTICLE_JOIN);
     push_article_where(&mut b, &q.filter);
-    // Newest *news* first (publication date), not last poll time. Missing pub date → first_seen_at.
     b.push(" ORDER BY COALESCE(a.published_at, a.first_seen_at) DESC, a.id DESC LIMIT ");
     b.push_bind(limit);
     b.push(" OFFSET ");
@@ -628,13 +392,10 @@ pub async fn get_article(pool: &SqlitePool, id: i64) -> Result<Option<Article>, 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArticleContentAppendResult {
-    /// Same `content_hash` as the latest stored version; only `last_fetched_at` was bumped.
     Unchanged,
-    /// New row in `article_contents`.
     Inserted,
 }
 
-/// Append a new content version when the hash differs from the latest snapshot (manual “pull from link”).
 pub async fn append_article_content_version(
     write_lock: &Semaphore,
     pool: &SqlitePool,
@@ -720,29 +481,4 @@ pub async fn list_article_contents(
     .fetch_all(pool)
     .await?;
     Ok(rows)
-}
-
-/// Incoming HTTP request log (timestamp via DB `DEFAULT`).
-pub async fn insert_request_log(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    method: &str,
-    path: &str,
-    status_code: i64,
-    duration_ms: i64,
-) -> Result<(), sqlx::Error> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    sqlx::query(
-        r#"INSERT INTO request_log (method, path, status_code, duration_ms) VALUES (?, ?, ?, ?)"#,
-    )
-    .bind(method)
-    .bind(path)
-    .bind(status_code)
-    .bind(duration_ms)
-    .execute(pool)
-    .await?;
-    Ok(())
 }

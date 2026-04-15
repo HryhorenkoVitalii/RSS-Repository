@@ -13,6 +13,7 @@ use rss::{Channel, Guid, Item};
 use scraper::{ElementRef, Html, Selector};
 
 use crate::browser_http::{headers_for, FetchProfile};
+use crate::http_retry;
 use crate::rss::{validate_feed_url, FeedFetchError};
 
 const MAX_HTML_BYTES: usize = 10 * 1024 * 1024;
@@ -449,15 +450,17 @@ pub async fn fetch_telegram_feed(
     let mut page_url = base_str.clone();
 
     while all.len() < max_items {
-        let headers = headers_for(FetchProfile::ArticleHtml, &page_url)
+        let page_owned = page_url.clone();
+        let headers = headers_for(FetchProfile::ArticleHtml, page_owned.as_str())
             .map_err(|e| FeedFetchError::Parse(format!("заголовки HTTP: {e}")))?;
-        let resp = client
-            .get(&page_url)
-            .headers(headers)
-            .timeout(FETCH_TIMEOUT)
-            .send()
-            .await?
-            .error_for_status()?;
+        let resp = http_retry::send_with_retries(|| {
+            client
+                .get(page_owned.as_str())
+                .headers(headers.clone())
+                .timeout(FETCH_TIMEOUT)
+        })
+        .await?
+        .error_for_status()?;
         let bytes = resp.bytes().await?;
         if bytes.len() > MAX_HTML_BYTES {
             return Err(FeedFetchError::TooLarge);
