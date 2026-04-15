@@ -12,6 +12,7 @@ use crate::ingest;
 use crate::media;
 use crate::page_screenshot;
 
+use super::screenshots::{screenshot_entry_from_row, ScreenshotEntry};
 use crate::routes::AppState;
 
 #[derive(Serialize)]
@@ -87,10 +88,21 @@ pub(crate) async fn expand_article_from_link_now(
     }))
 }
 
+#[derive(Serialize)]
+pub(crate) struct ArchiveFullPageResponse {
+    pub unchanged: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screenshot: Option<ScreenshotEntry>,
+    pub article: Article,
+    pub versions: Vec<ArticleContentVersion>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub telegram_reactions: Vec<ArticleReactionSnapshot>,
+}
+
 pub(crate) async fn archive_article_full_page_now(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<ExpandArticleFromLinkResponse>, AppError> {
+) -> Result<Json<ArchiveFullPageResponse>, AppError> {
     let article = db::get_article(&state.pool, id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -121,30 +133,39 @@ pub(crate) async fn archive_article_full_page_now(
     )
     .await?;
 
-    let img_src = format!("/api/media/{}", dl.sha256);
-    let body = page_screenshot::chromium_screenshot_body_html(&img_src);
-    let hash = page_screenshot::chromium_screenshot_content_hash(&body);
-
     let now = Utc::now();
-    let title = article.title.clone();
-    let outcome = db::append_article_content_version(
-        &state.db_write,
-        &state.pool,
-        id,
-        &title,
-        &body,
-        &hash,
-        now,
-    )
-    .await?;
+    let prev_sha = db::latest_screenshot_sha256(&state.pool, id).await?;
+    let unchanged = prev_sha.as_deref() == Some(dl.sha256.as_str());
+    let screenshot = if unchanged {
+        db::get_latest_screenshot_row(&state.pool, id)
+            .await?
+            .map(|r| screenshot_entry_from_row(&r))
+    } else {
+        let row_id = db::insert_article_screenshot(
+            &state.db_write,
+            &state.pool,
+            id,
+            &dl.sha256,
+            &url,
+            now,
+        )
+        .await?;
+        Some(ScreenshotEntry {
+            id: row_id,
+            captured_at: now,
+            media_sha256: dl.sha256.clone(),
+            media_url: format!("/api/media/{}", dl.sha256),
+        })
+    };
 
     let article = db::get_article(&state.pool, id)
         .await?
         .ok_or(AppError::NotFound)?;
     let versions = db::list_article_contents(&state.pool, id).await?;
     let telegram_reactions = db::list_article_reaction_snapshots(&state.pool, id).await?;
-    Ok(Json(ExpandArticleFromLinkResponse {
-        unchanged: outcome == ArticleContentAppendResult::Unchanged,
+    Ok(Json(ArchiveFullPageResponse {
+        unchanged,
+        screenshot,
         article,
         versions,
         telegram_reactions,

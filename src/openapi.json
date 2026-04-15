@@ -94,7 +94,16 @@
       "post": { "summary": "Fetch article HTML from link", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
     },
     "/api/articles/{id}/archive-full-page": {
-      "post": { "summary": "Archive as Chromium PNG", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+      "post": {
+        "summary": "Chromium PNG screenshot (stored in article_screenshots, not article_contents)",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }]
+      }
+    },
+    "/api/articles/{id}/screenshots": {
+      "get": {
+        "summary": "List Chromium page screenshots for an article",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }]
+      }
     },
     "/api/articles/{id}/telegram-reactions": {
       "get": { "summary": "Telegram reactions snapshot + history", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }

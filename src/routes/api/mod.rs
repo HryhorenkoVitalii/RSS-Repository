@@ -46,6 +46,10 @@ pub fn routes() -> Router<AppState> {
             post(articles::archive_article_full_page_now),
         )
         .route(
+            "/articles/{id}/screenshots",
+            get(articles::list_article_screenshots),
+        )
+        .route(
             "/articles/{id}/telegram-reactions",
             get(articles::get_article_telegram_reactions),
         )
