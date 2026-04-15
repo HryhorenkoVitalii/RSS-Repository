@@ -11,5 +11,10 @@ rss_repository.db-*
 # SQLite при запуске контейнера через scripts/podman-run.sh (bind mount ./data)
 /data
 
+# Локальная БД при dev из корня репозитория (DATABASE_URL=sqlite:.cursor_dev.db)
+.cursor_dev.db
+.cursor_dev.db-shm
+.cursor_dev.db-wal
+
 # Downloaded media files
 /media_store
