@@ -1,7 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0b0f14"/>
-  <rect x="32" y="32" width="448" height="448" rx="72" fill="#151d2a"/>
-  <circle cx="144" cy="368" r="40" fill="#5ba4f5"/>
-  <path d="M104 224a184 184 0 0 1 184 184" fill="none" stroke="#5ba4f5" stroke-width="40" stroke-linecap="round"/>
-  <path d="M104 112a296 296 0 0 1 296 296" fill="none" stroke="#5ba4f5" stroke-width="40" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="RSS Repository">
+  <defs>
+    <linearGradient id="rssrepo-bar" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#5ba4f5"/>
+      <stop offset="100%" stop-color="#3d82d6"/>
+    </linearGradient>
+    <linearGradient id="rssrepo-glow" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#7eb8ff"/>
+      <stop offset="100%" stop-color="#5ba4f5"/>
+    </linearGradient>
+  </defs>
+  <!-- Тёмный сквиркл: контраст на вкладке и в шапке -->
+  <rect width="512" height="512" rx="112" ry="112" fill="#06090e"/>
+  <rect x="32" y="32" width="448" height="448" rx="92" ry="92" fill="#0b1018" stroke="#1a2636" stroke-width="2"/>
+  <!-- Три «строки ленты» — читается и в 16px -->
+  <rect x="72" y="132" width="368" height="56" rx="18" fill="#141e2c"/>
+  <rect x="72" y="228" width="288" height="56" rx="18" fill="#1c2a40"/>
+  <rect x="72" y="324" width="368" height="56" rx="18" fill="url(#rssrepo-bar)"/>
+  <!-- Точка «новое / активный поток» -->
+  <circle cx="392" cy="352" r="28" fill="url(#rssrepo-glow)"/>
+  <circle cx="392" cy="352" r="14" fill="#0b0f14" opacity="0.35"/>
 </svg>

@@ -49,7 +49,12 @@ function buildFeedUrl(raw: string, source: FeedSourceKind): string {
   return s;
 }
 
-export function FeedsPage() {
+type FeedsPageProps = {
+  /** Called when user follows a link to the article list (e.g. from a feed card). */
+  onNavigateToArticles?: () => void;
+};
+
+export function FeedsPage({ onNavigateToArticles }: FeedsPageProps) {
   const [page, setPage] = useState(0);
   const [data, setData] = useState<FeedsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -299,6 +304,7 @@ export function FeedsPage() {
                     onSaveExpandFromLink={(v) => onSaveExpandFromLink(f, v)}
                     onPoll={() => void onPollOne(f.id)}
                     onDelete={() => onDelete(f)}
+                    onNavigateToArticles={onNavigateToArticles}
                   />
                 ))}
               </div>
@@ -328,6 +334,7 @@ function FeedCard({
   onSaveExpandFromLink,
   onPoll,
   onDelete,
+  onNavigateToArticles,
 }: {
   feed: Feed;
   disabled: boolean;
@@ -337,6 +344,7 @@ function FeedCard({
   onSaveExpandFromLink: (enabled: boolean) => void;
   onPoll: () => void;
   onDelete: () => void;
+  onNavigateToArticles?: () => void;
 }) {
   const rssPath = singleFeedRssPath(feed.id);
   const rssAbsoluteUrl = singleFeedRssAbsoluteUrl(feed.id);
@@ -391,8 +399,9 @@ function FeedCard({
       <div className="feed-card-header">
         <Link
           className="feed-card-header-link"
-          to={`/articles?feed_id=${feed.id}`}
+          to={`/?feed_id=${feed.id}`}
           title="View articles from this feed"
+          onClick={() => onNavigateToArticles?.()}
         >
           <span className="feed-card-id">#{feed.id}</span>
           <div className="feed-card-info">

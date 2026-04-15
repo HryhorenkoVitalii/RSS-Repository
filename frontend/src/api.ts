@@ -1,5 +1,8 @@
 export const API_PREFIX = '/api';
 
+/** GET/POST under `/articles/:id` returned 404 — статьи нет, это не «старый бекенд». */
+export const ARTICLE_NOT_FOUND_MESSAGE = 'Статья не найдена.';
+
 /** Backend serves OpenAPI at GET /api/openapi.json (see `src/openapi.json`). */
 export const OPENAPI_SPEC_PATH = '/openapi.json';
 
@@ -10,7 +13,7 @@ export function isFullPageArchiveBody(body: string): boolean {
   return body.startsWith(ARTICLE_FULL_PAGE_MARKER);
 }
 
-/** Must match `CHROMIUM_SCREENSHOT_MARKER` in `src/page_screenshot.rs`. */
+/** Legacy `article_contents` bodies: HTML wrapper + screenshot img from older Chromium saves. */
 export const ARTICLE_CHROMIUM_SCREENSHOT_MARKER =
   '<!--rss-repository:chromium-screenshot-->\n';
 
@@ -50,12 +53,20 @@ async function readJson<T>(_path: string, res: Response, text: string): Promise<
       typeof (data as { error: string }).error === 'string'
         ? (data as { error: string }).error
         : res.statusText;
-    if (
-      res.status === 404 &&
-      (!text.trim() || msg === 'Not Found' || msg === 'not found')
-    ) {
-      msg =
-        'Маршрут API не найден (404). Перезапустите бекенд (cargo run или npm run dev), чтобы подтянулась новая версия с «Загрузить со страницы».';
+    msg = typeof msg === 'string' ? msg.trim() : msg;
+    if (res.status === 404) {
+      const articleFamily = /^\/articles\/\d+(\/|$)/.test(_path);
+      const notFoundMsg =
+        typeof msg === 'string' && msg.toLowerCase() === 'not found';
+      if (articleFamily && notFoundMsg) {
+        msg = ARTICLE_NOT_FOUND_MESSAGE;
+      } else if (
+        !text.trim() ||
+        (typeof msg === 'string' && msg.toLowerCase() === 'not found')
+      ) {
+        msg =
+          'Маршрут API не найден (404). Перезапустите бекенд (cargo run или npm run dev), чтобы подтянулась новая версия с «Загрузить со страницы».';
+      }
     }
     throw new Error(msg);
   }

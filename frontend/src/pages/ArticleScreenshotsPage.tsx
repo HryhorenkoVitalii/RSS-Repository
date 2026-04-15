@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { listArticleScreenshots, type ArticleScreenshotEntry } from '../api';
+import { ARTICLE_NOT_FOUND_MESSAGE, listArticleScreenshots, type ArticleScreenshotEntry } from '../api';
+import { NotFoundPage } from './NotFoundPage';
 import { formatDateTime } from '../formatTime';
 
 export function ArticleScreenshotsPage() {
@@ -38,6 +39,9 @@ export function ArticleScreenshotsPage() {
   );
 
   if (err && !loading) {
+    if (err === ARTICLE_NOT_FOUND_MESSAGE) {
+      return <NotFoundPage />;
+    }
     return (
       <>
         <Link to={`/articles/${id}`} className="back-link">

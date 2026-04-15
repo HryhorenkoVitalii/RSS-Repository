@@ -1,8 +1,9 @@
 import DOMPurify from 'dompurify';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   archiveArticleFullPageNow,
+  ARTICLE_NOT_FOUND_MESSAGE,
   expandArticleFromLinkNow,
   fetchArticleArchiveBlobUrl,
   getArticle,
@@ -12,6 +13,7 @@ import {
   type ArticleContentVersion,
   type ArticleDetailResponse,
 } from '../api';
+import { NotFoundPage } from './NotFoundPage';
 import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
 import { formatDateTime } from '../formatTime';
 import {
@@ -44,6 +46,7 @@ function readStoredPullMode(): PagePullMode {
 
 export function ArticlePage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const numId = Number(id);
   const [data, setData] = useState<ArticleDetailResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -102,25 +105,24 @@ export function ArticlePage() {
         setRemoteMsg(
           res.unchanged
             ? 'Снимок совпадает с предыдущим (байты PNG те же; новая запись не добавлена).'
-            : 'Снимок страницы сохранён: открыта вкладка со списком снимков.',
+            : 'Снимок страницы сохранён: открыт список снимков.',
         );
-        window.open(
-          `/articles/${numId}/screenshots`,
-          '_blank',
-          'noopener,noreferrer',
-        );
+        navigate(`/articles/${numId}/screenshots`);
       }
     } catch (e) {
       setRemoteErr(e instanceof Error ? e.message : String(e));
     } finally {
       setRemoteBusy(false);
     }
-  }, [numId, pullMode]);
+  }, [numId, pullMode, navigate]);
 
   if (err) {
+    if (err === ARTICLE_NOT_FOUND_MESSAGE) {
+      return <NotFoundPage />;
+    }
     return (
       <>
-        <Link to="/articles" className="back-link">
+        <Link to="/" className="back-link">
           ← Back to articles
         </Link>
         <p className="err">{err}</p>
@@ -153,7 +155,7 @@ export function ArticlePage() {
 
   return (
     <>
-      <Link to="/articles" className="back-link">
+      <Link to="/" className="back-link">
         ← Back to articles
       </Link>
       <div className="card article">
@@ -168,12 +170,7 @@ export function ArticlePage() {
             {link ? <span className="article-source-open">{link}</span> : null}
             {showPull ? (
               <div className="article-pull-from-page">
-                <Link
-                  to={`/articles/${article.id}/screenshots`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="muted small article-screenshots-link"
-                >
+                <Link to={`/articles/${article.id}/screenshots`} className="muted small article-screenshots-link">
                   Снимки страницы
                 </Link>
                 <label className="article-pull-mode-label">

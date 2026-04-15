@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rss-repo-v2';
+const CACHE_NAME = 'rss-repo-v3';
 const SHELL_ASSETS = ['/', '/manifest.json'];
 
 self.addEventListener('install', (e) => {
