@@ -1,5 +1,7 @@
 import DOMPurify from 'dompurify';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { formatArticleDetailForAi } from '../aiScreenDigest';
+import { useAiScreenSection } from '../aiScreenContext';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   archiveArticleFullPageNow,
@@ -115,6 +117,13 @@ export function ArticlePage() {
       setRemoteBusy(false);
     }
   }, [numId, pullMode, navigate]);
+
+  const articleDetailDigest = useMemo(() => {
+    if (!data?.article) return null;
+    return formatArticleDetailForAi(data.article);
+  }, [data]);
+
+  useAiScreenSection('article_detail', articleDetailDigest);
 
   if (err) {
     if (err === ARTICLE_NOT_FOUND_MESSAGE) {

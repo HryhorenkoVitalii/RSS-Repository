@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { formatArticlesListForAi } from '../aiScreenDigest';
+import { useAiScreenSection } from '../aiScreenContext';
 import {
   isChromiumScreenshotBody,
   isFullPageArchiveBody,
@@ -235,6 +237,20 @@ export function ArticlesPage() {
     if (dateTo) bits.push(`to ${dateTo}`);
     return bits.length > 0 ? bits.join(' · ') : 'No extra filters';
   }, [feedIds, modifiedOnly, dateFrom, dateTo]);
+
+  const articlesScreenDigest = useMemo(() => {
+    if (loading) return null;
+    return formatArticlesListForAi({
+      articles,
+      feedTitle: (fid) => feedMap.get(fid),
+      filterSummary: `Фильтры: ${activeFilterHint}`,
+      page,
+      limit,
+      total,
+    });
+  }, [loading, articles, feedMap, activeFilterHint, page, limit, total]);
+
+  useAiScreenSection('articles', articlesScreenDigest);
 
   return (
     <>

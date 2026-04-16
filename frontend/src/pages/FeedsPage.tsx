@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { formatFeedsPageForAi } from '../aiScreenDigest';
+import { useAiScreenSection } from '../aiScreenContext';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   createFeed,
@@ -119,6 +121,18 @@ export function FeedsPage({ onNavigateToArticles }: FeedsPageProps) {
 
   const totalPages =
     data && data.limit > 0 ? Math.ceil(data.total / data.limit) : 1;
+
+  const feedsScreenDigest = useMemo(() => {
+    if (!data) return null;
+    return formatFeedsPageForAi({
+      feeds: data.feeds,
+      page: data.page,
+      limit: data.limit,
+      total: data.total,
+    });
+  }, [data]);
+
+  useAiScreenSection('feeds', feedsScreenDigest);
 
   function onAdd(e: React.FormEvent) {
     e.preventDefault();

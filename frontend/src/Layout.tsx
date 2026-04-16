@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
+import { AiScreenContextProvider } from './aiScreenContext';
 import { getAiAssistantFabVisible, setAiAssistantFabVisible } from './aiAssistantPrefs';
 import { AiAssistantFab } from './AiAssistantFab';
 import { FeedsPage } from './pages/FeedsPage';
@@ -61,6 +62,7 @@ export function Layout() {
 
   return (
     <PollProvider>
+      <AiScreenContextProvider>
       <div className="app-shell">
         <header className="header">
           <h1>
@@ -182,6 +184,7 @@ export function Layout() {
         }}
       />
       <Toasts />
+      </AiScreenContextProvider>
     </PollProvider>
   );
 }
