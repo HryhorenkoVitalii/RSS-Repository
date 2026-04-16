@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 function SparklesIcon({ className }: { className?: string }) {
   return (
@@ -15,10 +16,29 @@ function SparklesIcon({ className }: { className?: string }) {
       strokeLinejoin="round"
       aria-hidden
     >
-      <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+      <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063A2 2 0 0 0 14.063 8.5l-1.582 6.135a.5.5 0 0 1-.963 0z" />
       <path d="M20 3v4M22 5h-4M4 17v2M5 18H3" />
     </svg>
   );
+}
+
+type ChatMsg = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+};
+
+const WELCOME_TEXT =
+  'Привет! Здесь будет чат с ИИ по лентам и статьям. Сейчас ответы только локальные (сервер не подключён) — но окно уже как в мессенджере: история, ввод и отправка.';
+
+const STUB_REPLY =
+  'Подключение к модели пока не настроено. Это заглушка: ваше сообщение никуда не уходит, история хранится только в этой вкладке браузера.';
+
+function newMsgId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 type Props = {
@@ -28,7 +48,16 @@ type Props = {
 
 export function AiAssistantFab({ fabVisible, onFabDismiss }: Props) {
   const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<ChatMsg[]>([
+    { id: 'welcome', role: 'assistant', text: WELCOME_TEXT },
+  ]);
+  const [draft, setDraft] = useState('');
+  const listEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const reduceMotion = useReducedMotion() === true;
+  const titleId = useId();
+  const inputId = useId();
+  const replyTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!fabVisible) setOpen(false);
@@ -48,10 +77,40 @@ export function AiAssistantFab({ fabVisible, onFabDismiss }: Props) {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    listEndRef.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
+  }, [messages, open, reduceMotion]);
+
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => textareaRef.current?.focus(), 120);
+    return () => window.clearTimeout(t);
+  }, [open]);
+
+  useEffect(() => {
+    return () => {
+      if (replyTimerRef.current != null) window.clearTimeout(replyTimerRef.current);
+    };
+  }, []);
+
   function hideFab() {
     setOpen(false);
     onFabDismiss();
   }
+
+  const send = useCallback(() => {
+    const text = draft.trim();
+    if (!text) return;
+    const userId = newMsgId();
+    setMessages((m) => [...m, { id: userId, role: 'user', text }]);
+    setDraft('');
+    if (replyTimerRef.current != null) window.clearTimeout(replyTimerRef.current);
+    replyTimerRef.current = window.setTimeout(() => {
+      replyTimerRef.current = null;
+      setMessages((m) => [...m, { id: newMsgId(), role: 'assistant', text: STUB_REPLY }]);
+    }, 420);
+  }, [draft]);
 
   const ease = [0.4, 0, 0.2, 1] as const;
 
@@ -76,75 +135,152 @@ export function AiAssistantFab({ fabVisible, onFabDismiss }: Props) {
         transition: { duration: 0.28, ease: ease },
       };
 
-  const panelEnter = reduceMotion
-    ? { opacity: 0 }
-    : { opacity: 0, y: 10, scale: 0.995 };
-  const panelAnimate = reduceMotion
-    ? { opacity: 1, transition: { duration: 0.22, ease: ease } }
+  const messengerEase = ease;
+  const backdropMotion = reduceMotion
+    ? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } }
     : {
-        opacity: 1,
-        y: 0,
-        scale: 1,
-        transition: { duration: 0.34, ease: ease },
+        initial: { opacity: 0 },
+        animate: { opacity: 1, transition: { duration: 0.22, ease: messengerEase } },
+        exit: { opacity: 0, transition: { duration: 0.18, ease: messengerEase } },
       };
-  const panelExit = reduceMotion
-    ? { opacity: 0, transition: { duration: 0.16, ease: ease } }
-    : { opacity: 0, y: 4, transition: { duration: 0.24, ease: ease } };
+  const windowMotion = reduceMotion
+    ? {
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+      }
+    : {
+        initial: { opacity: 0, x: 20, scale: 0.99 },
+        animate: {
+          opacity: 1,
+          x: 0,
+          scale: 1,
+          transition: { duration: 0.32, ease: messengerEase },
+        },
+        exit: { opacity: 0, x: 12, scale: 0.995, transition: { duration: 0.22, ease: messengerEase } },
+      };
+
+  const portal =
+    typeof document !== 'undefined'
+      ? createPortal(
+          <AnimatePresence>
+            {open ? (
+              <>
+                <motion.div
+                  key="ai-messenger-backdrop"
+                  className="ai-assistant-messenger-backdrop"
+                  role="presentation"
+                  aria-hidden
+                  initial={backdropMotion.initial}
+                  animate={backdropMotion.animate}
+                  exit={backdropMotion.exit}
+                  onClick={() => setOpen(false)}
+                />
+                <motion.div
+                  key="ai-messenger-wrap"
+                  className="ai-assistant-messenger-wrap"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1, transition: { duration: reduceMotion ? 0.12 : 0.2, ease: messengerEase } }}
+                  exit={{ opacity: 0, transition: { duration: 0.15, ease: messengerEase } }}
+                >
+                  <motion.div
+                    className="ai-assistant-messenger"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby={titleId}
+                    initial={windowMotion.initial}
+                    animate={windowMotion.animate}
+                    exit={windowMotion.exit}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                  <header className="ai-assistant-messenger-head">
+                    <div className="ai-assistant-messenger-head-main">
+                      <span className="ai-assistant-messenger-avatar" aria-hidden>
+                        <SparklesIcon className="ai-assistant-messenger-avatar-icon" />
+                      </span>
+                      <div>
+                        <h2 id={titleId} className="ai-assistant-messenger-title">
+                          ИИ‑ассистент
+                        </h2>
+                        <p className="ai-assistant-messenger-subtitle muted small">
+                          Локальный чат · без сервера
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-compact ai-assistant-messenger-close"
+                      onClick={() => setOpen(false)}
+                      aria-label="Закрыть"
+                    >
+                      ✕
+                    </button>
+                  </header>
+
+                  <div
+                    className="ai-assistant-messenger-thread"
+                    role="log"
+                    aria-live="polite"
+                    aria-relevant="additions"
+                  >
+                    {messages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className={`ai-assistant-messenger-row ai-assistant-messenger-row--${msg.role}`}
+                      >
+                        <div className="ai-assistant-messenger-bubble">{msg.text}</div>
+                      </div>
+                    ))}
+                    <div ref={listEndRef} className="ai-assistant-messenger-thread-end" aria-hidden />
+                  </div>
+
+                  <form
+                    className="ai-assistant-messenger-composer"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      send();
+                    }}
+                  >
+                    <label htmlFor={inputId} className="visually-hidden">
+                      Сообщение
+                    </label>
+                    <textarea
+                      id={inputId}
+                      ref={textareaRef}
+                      className="ai-assistant-messenger-input"
+                      rows={2}
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          send();
+                        }
+                      }}
+                      placeholder="Напишите сообщение… (Enter — отправить, Shift+Enter — новая строка)"
+                      maxLength={8000}
+                    />
+                    <button
+                      type="submit"
+                      className="btn-primary ai-assistant-messenger-send"
+                      disabled={!draft.trim()}
+                    >
+                      Отправить
+                    </button>
+                  </form>
+                  </motion.div>
+                </motion.div>
+              </>
+            ) : null}
+          </AnimatePresence>,
+          document.body,
+        )
+      : null;
 
   return (
     <>
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            key="ai-assistant-backdrop"
-            className="ai-assistant-backdrop"
-            role="presentation"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0.16 : 0.26, ease: ease }}
-            onClick={() => setOpen(false)}
-          />
-        ) : null}
-      </AnimatePresence>
-
-      <div className={`ai-assistant-dock${open ? ' ai-assistant-dock--open' : ''}`}>
-        <AnimatePresence>
-          {open ? (
-            <motion.div
-              key="ai-assistant-panel"
-              className="ai-assistant-panel-motion"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="ai-assistant-title"
-              initial={panelEnter}
-              animate={panelAnimate}
-              exit={panelExit}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div id="ai-assistant-panel" className="ai-assistant-panel">
-                <div className="ai-assistant-panel-head">
-                  <h2 id="ai-assistant-title" className="ai-assistant-panel-title">
-                    AI assistant
-                  </h2>
-                  <button
-                    type="button"
-                    className="btn-ghost btn-compact"
-                    onClick={() => setOpen(false)}
-                    aria-label="Close"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="ai-assistant-panel-body muted small">
-                  The assistant is not connected yet. This panel is a placeholder for chat, summaries, or feed
-                  hints once the backend is wired.
-                </div>
-              </div>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-
+      {portal}
+      <div className="ai-assistant-dock">
         <AnimatePresence>
           {fabVisible ? (
             <motion.div
@@ -163,24 +299,25 @@ export function AiAssistantFab({ fabVisible, onFabDismiss }: Props) {
                     e.stopPropagation();
                     hideFab();
                   }}
-                  title="Hide assistant button"
-                  aria-label="Hide assistant button"
+                  title="Скрыть кнопку"
+                  aria-label="Скрыть кнопку ассистента"
                 >
                   <span aria-hidden>×</span>
                 </button>
-                <div className="ai-assistant-fab-float">
-                  <button
-                    type="button"
-                    className="ai-assistant-fab"
-                    onClick={() => setOpen((v) => !v)}
-                    title="AI assistant"
-                    aria-expanded={open}
-                    aria-controls="ai-assistant-panel"
-                  >
-                    <SparklesIcon className="ai-assistant-fab-icon" />
-                    <span className="visually-hidden">Open AI assistant</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="ai-assistant-fab"
+                  onClick={() => setOpen((v) => !v)}
+                  title="ИИ‑ассистент"
+                  aria-expanded={open}
+                  aria-haspopup="dialog"
+                >
+                  <SparklesIcon className="ai-assistant-fab-icon" />
+                  <span className="ai-assistant-fab-label" aria-hidden>
+                    ИИ
+                  </span>
+                  <span className="visually-hidden">Открыть чат с ассистентом</span>
+                </button>
               </div>
             </motion.div>
           ) : null}

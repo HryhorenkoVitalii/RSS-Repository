@@ -153,6 +153,8 @@ export function ArticlesPage() {
       },
       { replace: true },
     );
+    setFiltersOpen(false);
+    setFeedDropdownOpen(false);
   }
 
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
@@ -169,7 +171,9 @@ export function ArticlesPage() {
   );
 
   const [feedDropdownOpen, setFeedDropdownOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const filtersDrawerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -180,6 +184,31 @@ export function ArticlesPage() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setFiltersOpen(false);
+        setFeedDropdownOpen(false);
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [filtersOpen]);
+
+  /** Закрытие по клику снаружи панели (без затемнения экрана) */
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      const el = filtersDrawerRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setFiltersOpen(false);
+      setFeedDropdownOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [filtersOpen]);
 
   const selectedLabel = useMemo(() => {
     if (pendingFeedIds.length === 0) return 'All feeds';
@@ -196,84 +225,143 @@ export function ArticlesPage() {
     return m;
   }, [feeds]);
 
+  const activeFilterHint = useMemo(() => {
+    const bits: string[] = [];
+    if (feedIds.length > 0) {
+      bits.push(feedIds.length === 1 ? '1 feed' : `${feedIds.length} feeds`);
+    }
+    if (modifiedOnly) bits.push('modified');
+    if (dateFrom) bits.push(`from ${dateFrom}`);
+    if (dateTo) bits.push(`to ${dateTo}`);
+    return bits.length > 0 ? bits.join(' · ') : 'No extra filters';
+  }, [feedIds, modifiedOnly, dateFrom, dateTo]);
+
   return (
     <>
       {err ? <p className="err">{err}</p> : null}
 
-      <div className="card">
-        <h2 className="card-title">Filters</h2>
-        <form className="filters" onSubmit={onApplyFilters} ref={formRef}>
-          <div className="form-row" style={{ marginTop: '0.75rem' }}>
-            <div className="feed-multi-select" ref={dropdownRef}>
-              <label>Feeds</label>
-              <button
-                type="button"
-                className="feed-multi-toggle"
-                onClick={() => setFeedDropdownOpen((v) => !v)}
-              >
-                <span className="feed-multi-toggle-text">{selectedLabel}</span>
-                <span className="feed-multi-toggle-arrow">{feedDropdownOpen ? '▴' : '▾'}</span>
-              </button>
-              {feedDropdownOpen && (
-                <div className="feed-multi-dropdown">
-                  <label className="feed-multi-option">
-                    <input
-                      type="checkbox"
-                      checked={pendingFeedIds.length === 0}
-                      onChange={() => setPendingFeedIds([])}
-                    />
-                    <span>All feeds</span>
-                  </label>
-                  {feeds.map((f) => (
-                    <label key={f.id} className="feed-multi-option">
+      <button
+        type="button"
+        className={`articles-filters-rail${filtersOpen ? ' articles-filters-rail--hidden' : ''}`}
+        aria-expanded={filtersOpen}
+        aria-haspopup="dialog"
+        title={activeFilterHint}
+        onClick={() => setFiltersOpen(true)}
+      >
+        <span className="articles-filters-rail-icon" aria-hidden>
+          ☰
+        </span>
+        <span className="articles-filters-rail-label">Filters</span>
+      </button>
+
+      {filtersOpen ? (
+        <>
+          <aside
+            id="articles-filters-drawer"
+            ref={filtersDrawerRef}
+            className="articles-filters-drawer"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="articles-filters-title"
+          >
+            <div className="articles-filters-drawer-scroll">
+              <div className="card articles-filters-card">
+                <div className="articles-filters-drawer-head">
+                  <h2 id="articles-filters-title" className="card-title">
+                    Filters
+                  </h2>
+                  <button
+                    type="button"
+                    className="articles-filters-close"
+                    onClick={() => {
+                      setFiltersOpen(false);
+                      setFeedDropdownOpen(false);
+                    }}
+                    aria-label="Close filters"
+                  >
+                    ×
+                  </button>
+                </div>
+                <form className="filters" onSubmit={onApplyFilters} ref={formRef}>
+                  <div className="form-row" style={{ marginTop: '0.75rem' }}>
+                    <div className="feed-multi-select" ref={dropdownRef}>
+                      <label>Feeds</label>
+                      <button
+                        type="button"
+                        className="feed-multi-toggle"
+                        onClick={() => setFeedDropdownOpen((v) => !v)}
+                      >
+                        <span className="feed-multi-toggle-text">{selectedLabel}</span>
+                        <span className="feed-multi-toggle-arrow">
+                          {feedDropdownOpen ? '▴' : '▾'}
+                        </span>
+                      </button>
+                      {feedDropdownOpen && (
+                        <div className="feed-multi-dropdown">
+                          <label className="feed-multi-option">
+                            <input
+                              type="checkbox"
+                              checked={pendingFeedIds.length === 0}
+                              onChange={() => setPendingFeedIds([])}
+                            />
+                            <span>All feeds</span>
+                          </label>
+                          {feeds.map((f) => (
+                            <label key={f.id} className="feed-multi-option">
+                              <input
+                                type="checkbox"
+                                checked={pendingFeedIds.includes(String(f.id))}
+                                onChange={() => toggleFeed(String(f.id))}
+                              />
+                              <span>{f.title?.trim() || f.url}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <label
+                      className="small"
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                      }}
+                    >
                       <input
                         type="checkbox"
-                        checked={pendingFeedIds.includes(String(f.id))}
-                        onChange={() => toggleFeed(String(f.id))}
+                        name="modified_only"
+                        value="true"
+                        defaultChecked={modifiedOnly}
                       />
-                      <span>{f.title?.trim() || f.url}</span>
+                      Modified only
                     </label>
-                  ))}
-                </div>
-              )}
+                    <label>
+                      From
+                      <input type="date" name="date_from" defaultValue={dateFrom} />
+                    </label>
+                    <label>
+                      To
+                      <input type="date" name="date_to" defaultValue={dateTo} />
+                    </label>
+                    <button type="submit">Apply</button>
+                  </div>
+                  <div className="articles-filters-rss-row">
+                    <a
+                      className="btn-rss-export"
+                      href={feedRssPath(rssParams)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Export filtered articles as RSS 2.0 feed"
+                    >
+                      RSS Export
+                    </a>
+                  </div>
+                </form>
+              </div>
             </div>
-            <label
-              className="small"
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: '0.4rem',
-              }}
-            >
-              <input
-                type="checkbox"
-                name="modified_only"
-                value="true"
-                defaultChecked={modifiedOnly}
-              />
-              Modified only
-            </label>
-            <label>
-              From
-              <input type="date" name="date_from" defaultValue={dateFrom} />
-            </label>
-            <label>
-              To
-              <input type="date" name="date_to" defaultValue={dateTo} />
-            </label>
-            <button type="submit">Apply</button>
-            <a
-              className="btn-rss-export"
-              href={feedRssPath(rssParams)}
-              target="_blank"
-              rel="noreferrer"
-              title="Export filtered articles as RSS 2.0 feed"
-            >
-              RSS Export
-            </a>
-          </div>
-        </form>
-      </div>
+          </aside>
+        </>
+      ) : null}
 
       <div className="card">
         <div className="card-head">
