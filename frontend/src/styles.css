@@ -687,8 +687,6 @@ button.nav-link.nav-link--button:hover {
 
 .app-shell-main {
   flex: 1 1 auto;
-  /* Компенсация фиксированной шапки — контент не уезжает под неё */
-  padding-top: calc(var(--header-h) + env(safe-area-inset-top, 0px));
 }
 
 /* Колонка текста — внутри .main-content-column */
@@ -697,6 +695,8 @@ main.app-shell-main {
   max-width: none;
   margin: 0;
   padding: 0;
+  /* padding:0 выше сбрасывал бы отступ; фиксированная шапка — только здесь */
+  padding-top: calc(var(--header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
   overflow-x: hidden;
   min-width: 0;
 }
