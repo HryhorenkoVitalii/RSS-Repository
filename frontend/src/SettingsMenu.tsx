@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { setApiKey } from './api';
+import { OpenRouterDebugLogPanel } from './OpenRouterDebugLogPanel';
+import {
+  DEFAULT_OPENROUTER_MODEL,
+  getOpenRouterApiKey,
+  getOpenRouterModel,
+  setOpenRouterApiKey,
+  setOpenRouterModel,
+} from './openRouterPrefs';
 
 function GearIcon({ className }: { className?: string }) {
   return (
@@ -29,6 +37,9 @@ type SettingsMenuProps = {
 export function SettingsMenu({ aiAssistantFabVisible, onAiAssistantFabVisibleChange }: SettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState(() => localStorage.getItem('rss_api_key') ?? '');
+  const [openRouterKey, setOpenRouterKey] = useState('');
+  const [openRouterModel, setOpenRouterModelState] = useState(DEFAULT_OPENROUTER_MODEL);
+  const [openRouterLogOpen, setOpenRouterLogOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,16 +54,31 @@ export function SettingsMenu({ aiAssistantFabVisible, onAiAssistantFabVisibleCha
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        if (openRouterLogOpen) setOpenRouterLogOpen(false);
+        else setOpen(false);
+      }
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+  }, [open, openRouterLogOpen]);
+
+  useEffect(() => {
+    if (!open) {
+      setOpenRouterLogOpen(false);
+      return;
+    }
+    setOpenRouterKey(getOpenRouterApiKey() ?? '');
+    setOpenRouterModelState(getOpenRouterModel());
   }, [open]);
 
   function save() {
     setApiKey(key.trim() || null);
+    setOpenRouterApiKey(openRouterKey.trim() || null);
+    const m = openRouterModel.trim();
+    setOpenRouterModel(m.length > 0 ? m : null);
     setOpen(false);
-    window.location.reload();
+    window.dispatchEvent(new Event('rss-prefs-changed'));
   }
 
   return (
@@ -88,9 +114,6 @@ export function SettingsMenu({ aiAssistantFabVisible, onAiAssistantFabVisibleCha
               autoComplete="off"
             />
           </label>
-          <button type="button" className="btn-secondary btn-compact" onClick={save} style={{ marginTop: 10 }}>
-            Save
-          </button>
 
           <p className="settings-dropdown-heading" style={{ marginTop: 14 }}>
             Assistant
@@ -103,8 +126,62 @@ export function SettingsMenu({ aiAssistantFabVisible, onAiAssistantFabVisibleCha
             />
             <span>Show assistant button</span>
           </label>
+
+          <p className="settings-dropdown-heading" style={{ marginTop: 14 }}>
+            OpenRouter
+          </p>
+          <p className="muted small" style={{ margin: '0 0 8px' }}>
+            Ключ и модель для чата ассистента (
+            <a href="https://openrouter.ai/" target="_blank" rel="noreferrer">
+              openrouter.ai
+            </a>
+            ). Запросы идут из браузера напрямую в OpenRouter.
+          </p>
+          <label className="small">
+            OpenRouter API Key
+            <input
+              type="password"
+              value={openRouterKey}
+              onChange={(e) => setOpenRouterKey(e.target.value)}
+              placeholder="sk-or-…"
+              style={{ width: '100%', marginTop: 4 }}
+              autoComplete="off"
+            />
+          </label>
+          <label className="small" style={{ display: 'block', marginTop: 8 }}>
+            Model id
+            <input
+              type="text"
+              value={openRouterModel}
+              onChange={(e) => setOpenRouterModelState(e.target.value)}
+              placeholder={DEFAULT_OPENROUTER_MODEL}
+              style={{ width: '100%', marginTop: 4 }}
+              autoComplete="off"
+            />
+          </label>
+
+          <button type="button" className="btn-secondary btn-compact" onClick={save} style={{ marginTop: 12 }}>
+            Save
+          </button>
+
+          <p className="settings-dropdown-heading" style={{ marginTop: 14 }}>
+            Debug
+          </p>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            style={{ width: '100%' }}
+            onClick={() => setOpenRouterLogOpen(true)}
+          >
+            Лог OpenRouter…
+          </button>
+          <p className="muted small" style={{ margin: '6px 0 0' }}>
+            В панели лога — запрос и ответ по шагам: каждая роль отдельно (полный system), текст модели и сырой JSON.
+            Хранится в localStorage этой вкладки.
+          </p>
         </div>
       ) : null}
+      <OpenRouterDebugLogPanel open={openRouterLogOpen} onClose={() => setOpenRouterLogOpen(false)} />
     </div>
   );
 }

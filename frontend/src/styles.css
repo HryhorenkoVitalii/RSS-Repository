@@ -11,6 +11,7 @@
   --z-reaction-modal: 135;
   --z-feeds-modal: 140;
   --z-settings-dropdown: 190;
+  --z-openrouter-debug: 198;
   --z-toast: 200;
   --bg: #0b0f14;
   --bg-elevated: #111820;
@@ -258,6 +259,310 @@ a:hover {
   margin-top: 0.2rem;
   flex-shrink: 0;
   accent-color: var(--accent);
+}
+
+.openrouter-debug-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-openrouter-debug);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 12px 12px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.openrouter-debug-overlay > * {
+  pointer-events: auto;
+}
+
+.openrouter-debug-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+.openrouter-debug-panel {
+  position: relative;
+  width: min(920px, 100%);
+  max-height: min(88dvh, 900px);
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.openrouter-debug-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.openrouter-debug-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.openrouter-debug-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.openrouter-debug-hint {
+  margin: 0;
+  padding: 8px 14px 0;
+}
+
+.openrouter-debug-empty {
+  margin: 0;
+  padding: 16px 14px 20px;
+}
+
+.openrouter-debug-list {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.openrouter-debug-item {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.openrouter-debug-item-inner {
+  padding: 0 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.openrouter-debug-section-title {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.openrouter-debug-section {
+  margin: 0;
+}
+
+.openrouter-debug-model {
+  margin: 0 0 4px;
+}
+
+.openrouter-debug-count {
+  margin: 0 0 8px;
+}
+
+.openrouter-debug-code {
+  font-size: 0.8em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  word-break: break-all;
+}
+
+.openrouter-debug-msg-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.openrouter-debug-msg {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.openrouter-debug-msg--system {
+  border-left: 3px solid #58a6ff;
+}
+
+.openrouter-debug-msg--user {
+  border-left: 3px solid #a371f7;
+}
+
+.openrouter-debug-msg--assistant {
+  border-left: 3px solid #3fb950;
+}
+
+.openrouter-debug-msg--unknown {
+  border-left: 3px solid var(--muted);
+}
+
+.openrouter-debug-msg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid var(--border-light);
+  font-size: 0.72rem;
+}
+
+.openrouter-debug-msg-idx {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.openrouter-debug-msg-role {
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+
+.openrouter-debug-msg-body {
+  margin: 0;
+  padding: 10px 10px 12px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: min(42vh, 520px);
+  overflow: auto;
+}
+
+.openrouter-debug-response-intro {
+  margin: 0 0 6px;
+}
+
+.openrouter-debug-response-body {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: min(36vh, 420px);
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+}
+
+.openrouter-debug-response-body--err {
+  border-color: rgba(248, 81, 73, 0.35);
+  color: #ffb4af;
+}
+
+.openrouter-debug-subdetails {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.openrouter-debug-subdetails summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.openrouter-debug-subdetails summary:hover {
+  color: var(--text);
+}
+
+.openrouter-debug-subdetails--json {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+}
+
+.openrouter-debug-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.openrouter-debug-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+
+.openrouter-debug-summary::-webkit-details-marker {
+  display: none;
+}
+
+.openrouter-debug-meta {
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.openrouter-debug-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.openrouter-debug-badge--success {
+  background: rgba(46, 160, 67, 0.25);
+  color: #7ae295;
+}
+
+.openrouter-debug-badge--error {
+  background: rgba(248, 81, 73, 0.2);
+  color: #ff9a94;
+}
+
+.openrouter-debug-badge--aborted {
+  background: rgba(210, 153, 34, 0.2);
+  color: #ffd479;
+}
+
+.openrouter-debug-pre {
+  margin: 0;
+  padding: 10px 10px 12px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow-x: auto;
+  border-top: 1px solid var(--border-light);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 48vh;
+  overflow-y: auto;
+}
+
+.openrouter-debug-pre--raw {
+  margin-top: 6px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  max-height: min(32vh, 360px);
+}
+
+.openrouter-debug-pre--fulljson {
+  margin-top: 6px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  max-height: min(40vh, 480px);
 }
 
 /* Панель и кнопка ИИ — справа снизу; чат открывается над ними */
