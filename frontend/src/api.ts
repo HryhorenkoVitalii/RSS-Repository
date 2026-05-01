@@ -13,14 +13,6 @@ export function isFullPageArchiveBody(body: string): boolean {
   return body.startsWith(ARTICLE_FULL_PAGE_MARKER);
 }
 
-/** Legacy `article_contents` bodies: HTML wrapper + screenshot img from older Chromium saves. */
-export const ARTICLE_CHROMIUM_SCREENSHOT_MARKER =
-  '<!--rss-repository:chromium-screenshot-->\n';
-
-export function isChromiumScreenshotBody(body: string): boolean {
-  return body.startsWith(ARTICLE_CHROMIUM_SCREENSHOT_MARKER);
-}
-
 function getApiKey(): string | null {
   return localStorage.getItem('rss_api_key');
 }
@@ -65,7 +57,7 @@ async function readJson<T>(_path: string, res: Response, text: string): Promise<
         (typeof msg === 'string' && msg.toLowerCase() === 'not found')
       ) {
         msg =
-          'Маршрут API не найден (404). Перезапустите бекенд (cargo run или npm run dev), чтобы подтянулась новая версия с «Загрузить со страницы».';
+          'Маршрут API не найден (404). Перезапустите бекенд (cargo run или npm run dev).';
       }
     }
     throw new Error(msg);
@@ -113,6 +105,41 @@ async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
   return readJson<T>(path, res, text);
 }
 
+async function apiPutJson(path: string, body: unknown): Promise<void> {
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    method: 'PUT',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    await readJson<unknown>(path, res, text);
+  }
+}
+
+async function apiPatchJson(path: string, body: unknown): Promise<void> {
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    await readJson<unknown>(path, res, text);
+  }
+}
+
+/** Fallback when API omits color (старые ответы). */
+export const DEFAULT_TAG_COLOR = '#64748b';
+
+export type Tag = {
+  id: number;
+  name: string;
+  /** `#rgb` or `#rrggbb` */
+  color: string;
+  created_at: string;
+};
+
 export type Feed = {
   id: number;
   url: string;
@@ -120,10 +147,10 @@ export type Feed = {
   poll_interval_seconds: number;
   /** Telegram preview feeds: max posts per poll (1–500). */
   telegram_max_items: number;
-  /** RSS: fetch article HTML from item link when the feed only has a short stub. */
-  expand_article_from_link: boolean;
   created_at: string;
   last_polled_at: string | null;
+  /** Tags assigned to this source (may be absent on older responses). */
+  tags?: Tag[];
 };
 
 export type FeedsResponse = {
@@ -133,23 +160,46 @@ export type FeedsResponse = {
   limit: number;
 };
 
+function coerceTag(raw: unknown): Tag | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const t = raw as Record<string, unknown>;
+  const id = Number(t.id);
+  if (!Number.isFinite(id)) return null;
+  const colorRaw = t.color;
+  const color =
+    typeof colorRaw === 'string' && /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(colorRaw.trim())
+      ? colorRaw.trim()
+      : DEFAULT_TAG_COLOR;
+  return {
+    id,
+    name: String(t.name ?? ''),
+    color,
+    created_at: String(t.created_at ?? ''),
+  };
+}
+
 function coerceFeed(raw: unknown): Feed {
   const f = raw as Record<string, unknown>;
   const tg =
     typeof f.telegram_max_items === 'number' && !Number.isNaN(f.telegram_max_items)
       ? Math.min(500, Math.max(1, Math.round(f.telegram_max_items)))
       : 500;
-  const expand = Boolean(f.expand_article_from_link);
-  return {
+  let tags: Tag[] | undefined;
+  if (Array.isArray(f.tags)) {
+    const arr = f.tags.map(coerceTag).filter((x): x is Tag => x != null);
+    tags = arr.length > 0 ? arr : [];
+  }
+  const out: Feed = {
     id: Number(f.id),
     url: String(f.url ?? ''),
     title: f.title == null ? null : String(f.title),
     poll_interval_seconds: Number(f.poll_interval_seconds ?? 600),
     telegram_max_items: tg,
-    expand_article_from_link: expand,
     created_at: String(f.created_at ?? ''),
     last_polled_at: f.last_polled_at == null ? null : String(f.last_polled_at),
   };
+  if (tags !== undefined) out.tags = tags;
+  return out;
 }
 
 function normalizeFeeds(raw: unknown): FeedsResponse {
@@ -195,8 +245,6 @@ export async function createFeed(opts: {
   pollIntervalSeconds: number;
   /** Set for Telegram feeds (1–500). Omitted for RSS. */
   telegramMaxItems?: number;
-  /** RSS only: load full HTML from each item link when the feed body is very short. */
-  expandArticleFromLink?: boolean;
 }): Promise<{ id: number }> {
   const body: Record<string, unknown> = {
     url: opts.url,
@@ -204,9 +252,6 @@ export async function createFeed(opts: {
   };
   if (opts.telegramMaxItems !== undefined) {
     body.telegram_max_items = opts.telegramMaxItems;
-  }
-  if (opts.expandArticleFromLink === true) {
-    body.expand_article_from_link = true;
   }
   return apiPostJson('/feeds', body);
 }
@@ -226,15 +271,6 @@ export async function updateFeedTelegramMaxItems(
 ): Promise<void> {
   await apiPostJson(`/feeds/${id}/telegram-max-items`, {
     telegram_max_items: telegramMaxItems,
-  });
-}
-
-export async function updateFeedExpandFromLink(
-  id: number,
-  expandArticleFromLink: boolean,
-): Promise<void> {
-  await apiPostJson(`/feeds/${id}/expand-from-link`, {
-    expand_article_from_link: expandArticleFromLink,
   });
 }
 
@@ -275,6 +311,37 @@ export function subscribePollEvents(
 
 export async function deleteFeed(id: number): Promise<void> {
   await apiDelete(`/feeds/${id}`);
+}
+
+export async function listTags(): Promise<Tag[]> {
+  const raw = await apiGet<unknown>('/tags');
+  if (!Array.isArray(raw)) return [];
+  return raw.map(coerceTag).filter((x): x is Tag => x != null);
+}
+
+export async function createTag(opts: {
+  name: string;
+  /** Hex color; default on server if omitted. */
+  color?: string;
+}): Promise<{ id: number }> {
+  const body: Record<string, unknown> = { name: opts.name };
+  if (opts.color !== undefined) body.color = opts.color;
+  return apiPostJson<{ id: number }>('/tags', body);
+}
+
+export async function updateTag(
+  id: number,
+  patch: { name?: string; color?: string },
+): Promise<void> {
+  await apiPatchJson(`/tags/${id}`, patch);
+}
+
+export async function deleteTag(id: number): Promise<void> {
+  await apiDelete(`/tags/${id}`);
+}
+
+export async function putFeedTags(feedId: number, tagIds: number[]): Promise<void> {
+  await apiPutJson(`/feeds/${feedId}/tags`, { tag_ids: tagIds });
 }
 
 export type ArticleTelegramReaction = {
@@ -371,6 +438,8 @@ function normalizeArticles(raw: unknown): ArticlesResponse {
 
 export type ListArticlesParams = {
   feedIds?: string[];
+  /** Feed must have any of these tags (OR). */
+  tagIds?: string[];
   modifiedOnly?: boolean;
   page?: number;
   dateFrom?: string;
@@ -383,6 +452,8 @@ export async function listArticles(
   const q = new URLSearchParams();
   if (params.feedIds && params.feedIds.length > 0)
     q.set('feed_id', params.feedIds.join(','));
+  if (params.tagIds && params.tagIds.length > 0)
+    q.set('tag_id', params.tagIds.join(','));
   if (params.modifiedOnly) q.set('modified_only', 'true');
   if (params.page != null && params.page > 0)
     q.set('page', String(params.page));
@@ -409,88 +480,6 @@ export async function getArticle(id: number): Promise<ArticleDetailResponse> {
     : [];
   const telegram_reactions = coerceTelegramReactions(o.telegram_reactions);
   return { article, versions, ...(telegram_reactions ? { telegram_reactions } : {}) };
-}
-
-export type ExpandArticleFromLinkResponse = ArticleDetailResponse & {
-  unchanged: boolean;
-};
-
-export type ArticleScreenshotEntry = {
-  id: number;
-  captured_at: string;
-  media_sha256: string;
-  /** Path like `/api/media/{sha256}`. */
-  media_url: string;
-};
-
-export type ArchiveFullPageResponse = ArticleDetailResponse & {
-  unchanged: boolean;
-  /** Present after a successful capture (including unchanged duplicate bytes). */
-  screenshot?: ArticleScreenshotEntry | null;
-};
-
-function coerceScreenshotEntry(raw: unknown): ArticleScreenshotEntry | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const o = raw as Record<string, unknown>;
-  const id = Number(o.id);
-  if (!Number.isFinite(id)) return null;
-  return {
-    id,
-    captured_at: String(o.captured_at ?? ''),
-    media_sha256: String(o.media_sha256 ?? ''),
-    media_url: String(o.media_url ?? ''),
-  };
-}
-
-/** List Chromium PNG screenshots stored for an article (not RSS body versions). */
-export async function listArticleScreenshots(
-  id: number,
-): Promise<ArticleScreenshotEntry[]> {
-  const raw = await apiGet<unknown>(`/articles/${id}/screenshots`);
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((row) => coerceScreenshotEntry(row))
-    .filter((x): x is ArticleScreenshotEntry => x != null);
-}
-
-/** Fetch article HTML from the item URL (same extractor as RSS “expand from link”) and store a new version. */
-export async function expandArticleFromLinkNow(
-  id: number,
-): Promise<ExpandArticleFromLinkResponse> {
-  const raw = await apiPostJson<unknown>(`/articles/${id}/expand-from-link`, {});
-  const o = raw as Record<string, unknown>;
-  const article = coerceArticle(o.article ?? raw);
-  const versions = Array.isArray(o.versions)
-    ? (o.versions as ArticleContentVersion[])
-    : [];
-  const telegram_reactions = coerceTelegramReactions(o.telegram_reactions);
-  return {
-    unchanged: Boolean(o.unchanged),
-    article,
-    versions,
-    ...(telegram_reactions ? { telegram_reactions } : {}),
-  };
-}
-
-/** Save a headless Chromium PNG of the article URL (`article_screenshots` + media; no new article_contents row). */
-export async function archiveArticleFullPageNow(
-  id: number,
-): Promise<ArchiveFullPageResponse> {
-  const raw = await apiPostJson<unknown>(`/articles/${id}/archive-full-page`, {});
-  const o = raw as Record<string, unknown>;
-  const article = coerceArticle(o.article ?? raw);
-  const versions = Array.isArray(o.versions)
-    ? (o.versions as ArticleContentVersion[])
-    : [];
-  const telegram_reactions = coerceTelegramReactions(o.telegram_reactions);
-  const screenshot = coerceScreenshotEntry(o.screenshot);
-  return {
-    unchanged: Boolean(o.unchanged),
-    article,
-    versions,
-    ...(screenshot ? { screenshot } : {}),
-    ...(telegram_reactions ? { telegram_reactions } : {}),
-  };
 }
 
 /** Blob URL for `text/html`; caller must `URL.revokeObjectURL` when done. */

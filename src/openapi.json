@@ -69,14 +69,36 @@
     "/api/feeds/{id}/telegram-max-items": {
       "post": { "summary": "Update Telegram max items", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
     },
-    "/api/feeds/{id}/expand-from-link": {
-      "post": { "summary": "Update expand-from-link flag", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
-    },
     "/api/feeds/{id}/poll": {
       "post": { "summary": "Poll one feed now", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }], "responses": { "202": { "description": "Accepted" } } }
     },
+    "/api/feeds/{id}/tags": {
+      "put": {
+        "summary": "Replace tags on a feed",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "description": "Body: { \"tag_ids\": number[] }. Empty array clears tags.",
+        "responses": { "204": { "description": "No Content" } }
+      }
+    },
+    "/api/tags": {
+      "get": { "summary": "List all tags (includes color)" },
+      "post": {
+        "summary": "Create tag",
+        "description": "Body: { \"name\": string, \"color\"?: \"#rrggbb\" } — color optional, default slate.",
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/api/tags/{id}": {
+      "patch": {
+        "summary": "Update tag name and/or color",
+        "description": "Body: { \"name\"?: string, \"color\"?: \"#rrggbb\" } — at least one field required.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "204": { "description": "No Content" } }
+      },
+      "delete": { "summary": "Delete tag", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
+    },
     "/api/articles": {
-      "get": { "summary": "List articles", "description": "Query: feed_id, modified_only, page, date_from, date_to" }
+      "get": { "summary": "List articles", "description": "Query: feed_id, tag_id (comma ids — feeds having any tag), modified_only, page, date_from, date_to" }
     },
     "/api/articles/{id}": {
       "get": { "summary": "Article detail + versions", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
@@ -88,21 +110,6 @@
           { "name": "article_id", "in": "path", "required": true, "schema": { "type": "integer" } },
           { "name": "content_id", "in": "path", "required": true, "schema": { "type": "integer" } }
         ]
-      }
-    },
-    "/api/articles/{id}/expand-from-link": {
-      "post": { "summary": "Fetch article HTML from link", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
-    },
-    "/api/articles/{id}/archive-full-page": {
-      "post": {
-        "summary": "Chromium PNG screenshot (stored in article_screenshots, not article_contents)",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }]
-      }
-    },
-    "/api/articles/{id}/screenshots": {
-      "get": {
-        "summary": "List Chromium page screenshots for an article",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }]
       }
     },
     "/api/articles/{id}/telegram-reactions": {
@@ -119,7 +126,7 @@
       }
     },
     "/feed.xml": {
-      "get": { "summary": "RSS 2.0 export", "description": "Not under /api; same host." }
+      "get": { "summary": "RSS 2.0 export", "description": "Not under /api; same host. Query: feed_id, tag_id, modified_only, date_from, date_to, refresh." }
     }
   }
 }

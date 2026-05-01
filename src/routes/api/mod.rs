@@ -6,8 +6,9 @@ mod health;
 mod media_serve;
 mod openapi;
 mod polling;
+mod tags;
 
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::Router;
 
 use super::AppState;
@@ -26,29 +27,19 @@ pub fn routes() -> Router<AppState> {
             "/feeds/{id}/telegram-max-items",
             post(feeds::update_feed_telegram_max_items),
         )
-        .route(
-            "/feeds/{id}/expand-from-link",
-            post(feeds::update_feed_expand_from_link),
-        )
         .route("/feeds/{id}/poll", post(polling::poll_feed_now))
+        .route("/feeds/{id}/tags", put(feeds::put_feed_tags))
+        .route("/tags", get(tags::list_tags).post(tags::create_tag))
+        .route(
+            "/tags/{id}",
+            patch(tags::patch_tag).delete(tags::delete_tag),
+        )
         .route("/articles", get(articles::list_articles))
         .route(
             "/articles/{article_id}/contents/{content_id}/raw-html",
             get(articles::get_article_content_raw_html),
         )
         .route("/articles/{id}", get(articles::get_article_detail))
-        .route(
-            "/articles/{id}/expand-from-link",
-            post(articles::expand_article_from_link_now),
-        )
-        .route(
-            "/articles/{id}/archive-full-page",
-            post(articles::archive_article_full_page_now),
-        )
-        .route(
-            "/articles/{id}/screenshots",
-            get(articles::list_article_screenshots),
-        )
         .route(
             "/articles/{id}/telegram-reactions",
             get(articles::get_article_telegram_reactions),

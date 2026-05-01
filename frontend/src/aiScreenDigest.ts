@@ -61,6 +61,14 @@ export function formatFeedsPageForAi(params: {
     lines.push(`${i + 1}. ${title}`);
     lines.push(`   URL: ${f.url}`);
     lines.push(`   id: ${f.id}, интервал опроса: ${f.poll_interval_seconds}s`);
+    const tagBits = (f.tags ?? [])
+      .map((t) => {
+        const n = t.name.trim();
+        if (!n) return '';
+        return `${n} (${t.color})`;
+      })
+      .filter(Boolean);
+    if (tagBits.length > 0) lines.push(`   Теги: ${tagBits.join(', ')}`);
     lines.push('');
   });
   return lines.join('\n').trim();

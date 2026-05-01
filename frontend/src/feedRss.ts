@@ -1,5 +1,7 @@
 export type RssExportParams = {
   feedIds?: number[];
+  /** Feeds that have any of these tag ids (OR). */
+  tagIds?: number[];
   modifiedOnly?: boolean;
   dateFrom?: string;
   dateTo?: string;
@@ -9,6 +11,9 @@ export function feedRssPath(params: RssExportParams): string {
   const q = new URLSearchParams();
   if (params.feedIds && params.feedIds.length > 0) {
     q.set('feed_id', params.feedIds.join(','));
+  }
+  if (params.tagIds && params.tagIds.length > 0) {
+    q.set('tag_id', params.tagIds.join(','));
   }
   if (params.modifiedOnly) q.set('modified_only', 'true');
   if (params.dateFrom) q.set('date_from', params.dateFrom);

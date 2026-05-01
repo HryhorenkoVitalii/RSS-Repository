@@ -130,53 +130,6 @@ pub async fn download_and_store(
     })
 }
 
-/// Write `bytes` into `MEDIA_DIR` (if missing) and insert a `media` row (same layout as after HTTP download).
-pub async fn store_media_bytes(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    bytes: &[u8],
-    original_url: &str,
-    mime_type: &str,
-    dir: &std::path::Path,
-) -> Result<DownloadedMedia, AppError> {
-    if bytes.is_empty() {
-        return Err(AppError::BadRequest("empty media payload".into()));
-    }
-    if bytes.len() > MAX_MEDIA_BYTES {
-        return Err(AppError::BadRequest(format!(
-            "media exceeds {} bytes",
-            MAX_MEDIA_BYTES
-        )));
-    }
-    let sha = hash_bytes(bytes);
-    let ext = extension_from_mime(mime_type);
-    let path = file_path(dir, &sha, ext);
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                AppError::BadGateway(format!("media mkdir: {e}"))
-            })?;
-        }
-        tokio::fs::write(&path, bytes)
-            .await
-            .map_err(|e| AppError::BadGateway(format!("media write: {e}")))?;
-    }
-    save_media_record(
-        write_lock,
-        pool,
-        &sha,
-        original_url,
-        mime_type,
-        bytes.len() as i64,
-    )
-    .await?;
-    Ok(DownloadedMedia {
-        sha256: sha,
-        mime_type: mime_type.to_string(),
-        file_size: bytes.len(),
-    })
-}
-
 pub async fn save_media_record(
     write_lock: &Semaphore,
     pool: &SqlitePool,

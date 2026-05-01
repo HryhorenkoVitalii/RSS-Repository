@@ -18,6 +18,7 @@ const RSS_PAGE_SIZE: i64 = 100;
 #[derive(Deserialize, Default)]
 pub struct RssQuery {
     pub feed_id: Option<String>,
+    pub tag_id: Option<String>,
     /// Case-insensitive match on stored feed title (after first poll). Must be unique among feeds.
     pub title: Option<String>,
     pub modified_only: Option<String>,
@@ -116,6 +117,10 @@ pub async fn rss_feed(
     if feed_ids.len() > 50 {
         return Err(AppError::BadRequest("too many feed_id values (max 50)".into()));
     }
+    let tag_ids: Vec<i64> = parse_feed_ids(&q.tag_id);
+    if tag_ids.len() > 50 {
+        return Err(AppError::BadRequest("too many tag_id values (max 50)".into()));
+    }
 
     let last_fetched_from = q.date_from.as_deref().and_then(parse_date_from_day);
     let last_fetched_before = q.date_to.as_deref().and_then(parse_date_to_exclusive);
@@ -167,6 +172,7 @@ pub async fn rss_feed(
         ArticleListQuery {
             filter: ArticleFilter {
                 feed_ids: feed_ids.clone(),
+                tag_ids: tag_ids.clone(),
                 only_modified,
                 last_fetched_from,
                 last_fetched_before,

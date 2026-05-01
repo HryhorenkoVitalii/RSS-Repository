@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use tokio::sync::Semaphore;
 
-use crate::article_expand;
 use crate::db::{self, Feed};
 use crate::media;
 use crate::rss::{article_guid, fetch_and_parse, plain_fingerprint};
@@ -59,34 +58,10 @@ pub async fn poll_feed(
     let now = Utc::now();
     let media_dir = media::media_dir();
 
-    let channel_base = channel.link().trim();
-    let channel_base_opt = (!channel_base.is_empty()).then_some(channel_base);
-    let rss_expand_from_link =
-        feed.expand_article_from_link && tg_reactions.is_none();
-
     for item in channel.items() {
         let guid = article_guid(item).map_err(|e| e.to_string())?;
         let title = item.title().map(|t| t.to_string()).unwrap_or_default();
-        let mut body = item_display_body(item);
-        if rss_expand_from_link {
-            if let Some(link_raw) = item.link() {
-                if article_expand::rss_body_is_stub(&body).map_err(|e| e.to_string())? {
-                    if let Some(u) =
-                        article_expand::resolve_article_url(link_raw, channel_base_opt)
-                    {
-                        match article_expand::fetch_article_body_from_url(client, &u).await {
-                            Ok(html) if !html.trim().is_empty() => {
-                                body = html;
-                            }
-                            Err(e) => {
-                                tracing::warn!(url = %u, error = %e, "expand article from link failed");
-                            }
-                            Ok(_) => {}
-                        }
-                    }
-                }
-            }
-        }
+        let body = item_display_body(item);
         let canon = plain_fingerprint(&body).map_err(|e| e.to_string())?;
         let published_at = item.pub_date().and_then(parse_pub_date);
 
@@ -154,48 +129,4 @@ pub async fn poll_feed(
         .map_err(|e| e.to_string())?;
 
     Ok(())
-}
-
-/// Rewrite embedded media to local `/api/media/…` URLs and compute `content_hash` (same rules as RSS ingest).
-pub async fn finalize_expanded_html_for_storage(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    client: &reqwest::Client,
-    raw_html: &str,
-) -> Result<(String, Vec<u8>), String> {
-    let canon = plain_fingerprint(raw_html).map_err(|e| e.to_string())?;
-    let media_urls = media::extract_media_urls(raw_html);
-    let media_dir = media::media_dir();
-    let mut replacements: Vec<(String, String)> = Vec::new();
-    let mut media_hashes: Vec<String> = Vec::new();
-
-    for url in &media_urls {
-        match media::download_and_store(client, url, &media_dir).await {
-            Ok(dl) => {
-                let local_url = format!("/api/media/{}", dl.sha256);
-                replacements.push((url.clone(), local_url));
-                media_hashes.push(dl.sha256.clone());
-
-                if let Err(e) = media::save_media_record(
-                    write_lock,
-                    pool,
-                    &dl.sha256,
-                    url,
-                    &dl.mime_type,
-                    dl.file_size as i64,
-                )
-                .await
-                {
-                    tracing::warn!(url = %url, error = %e, "media db insert failed");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(url = %url, error = %e, "media download failed, keeping original URL");
-            }
-        }
-    }
-
-    let body = media::rewrite_media_urls(raw_html, &replacements);
-    let hash = media::combined_content_hash(&canon, &mut media_hashes);
-    Ok((body, hash))
 }

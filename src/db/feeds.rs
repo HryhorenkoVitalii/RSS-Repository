@@ -11,7 +11,6 @@ pub struct Feed {
     pub title: Option<String>,
     pub poll_interval_seconds: i32,
     pub telegram_max_items: i32,
-    pub expand_article_from_link: bool,
     pub created_at: DateTime<Utc>,
     pub last_polled_at: Option<DateTime<Utc>>,
 }
@@ -25,7 +24,7 @@ pub struct FeedOption {
 
 pub async fn list_feeds(pool: &SqlitePool) -> Result<Vec<Feed>, AppError> {
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, created_at, last_polled_at
            FROM feeds ORDER BY id"#,
     )
     .fetch_all(pool)
@@ -48,7 +47,7 @@ pub async fn list_feeds_page(
     let limit = limit.clamp(1, 200);
     let offset = offset.max(0);
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, created_at, last_polled_at
            FROM feeds ORDER BY id LIMIT ? OFFSET ?"#,
     )
     .bind(limit)
@@ -71,7 +70,7 @@ pub async fn find_feeds_by_title_ci(pool: &SqlitePool, title: &str) -> Result<Ve
         return Ok(vec![]);
     }
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, created_at, last_polled_at
            FROM feeds
            WHERE title IS NOT NULL
              AND TRIM(title) != ''
@@ -85,7 +84,7 @@ pub async fn find_feeds_by_title_ci(pool: &SqlitePool, title: &str) -> Result<Ve
 
 pub async fn get_feed(pool: &SqlitePool, id: i64) -> Result<Option<Feed>, AppError> {
     let row = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, created_at, last_polled_at
            FROM feeds WHERE id = ?"#,
     )
     .bind(id)
@@ -100,21 +99,19 @@ pub async fn create_feed(
     url: &str,
     poll_interval_seconds: i32,
     telegram_max_items: i32,
-    expand_article_from_link: bool,
 ) -> Result<i64, AppError> {
     let _w = write_lock
         .acquire()
         .await
         .expect("db_write semaphore must stay open");
     let id = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO feeds (url, poll_interval_seconds, telegram_max_items, expand_article_from_link)
-           VALUES (?, ?, ?, ?)
+        r#"INSERT INTO feeds (url, poll_interval_seconds, telegram_max_items)
+           VALUES (?, ?, ?)
            RETURNING id"#,
     )
     .bind(url)
     .bind(poll_interval_seconds)
     .bind(telegram_max_items)
-    .bind(expand_article_from_link)
     .fetch_one(pool)
     .await?;
     Ok(id)
@@ -172,24 +169,6 @@ pub async fn update_feed_telegram_max_items(
     Ok(r.rows_affected() > 0)
 }
 
-pub async fn update_feed_expand_article_from_link(
-    write_lock: &Semaphore,
-    pool: &SqlitePool,
-    id: i64,
-    expand_article_from_link: bool,
-) -> Result<bool, AppError> {
-    let _w = write_lock
-        .acquire()
-        .await
-        .expect("db_write semaphore must stay open");
-    let r = sqlx::query(r#"UPDATE feeds SET expand_article_from_link = ? WHERE id = ?"#)
-        .bind(expand_article_from_link)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(r.rows_affected() > 0)
-}
-
 pub async fn update_feed_meta(
     write_lock: &Semaphore,
     pool: &SqlitePool,
@@ -212,7 +191,7 @@ pub async fn update_feed_meta(
 
 pub async fn feeds_due_for_poll(pool: &SqlitePool) -> Result<Vec<Feed>, AppError> {
     let rows = sqlx::query_as::<_, Feed>(
-        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, expand_article_from_link, created_at, last_polled_at
+        r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, created_at, last_polled_at
            FROM feeds
            WHERE last_polled_at IS NULL
               OR (CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', last_polled_at) AS INTEGER))

@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{self, Feed, FeedOption};
+use crate::db::{self, Feed, FeedOption, Tag};
 use crate::error::AppError;
 use crate::telegram::{is_telegram_preview_url, normalize_new_feed_url};
 
@@ -17,8 +17,16 @@ pub(super) struct FeedsListQuery {
 }
 
 #[derive(Serialize)]
+pub(super) struct FeedWithTags {
+    #[serde(flatten)]
+    pub feed: Feed,
+    #[serde(default)]
+    pub tags: Vec<Tag>,
+}
+
+#[derive(Serialize)]
 pub(super) struct FeedsResponse {
-    pub feeds: Vec<Feed>,
+    pub feeds: Vec<FeedWithTags>,
     pub total: i64,
     pub page: i64,
     pub limit: i64,
@@ -32,7 +40,16 @@ pub(super) async fn list_feeds(
     let page = q.page.unwrap_or(0).max(0);
     let offset = page * limit;
     let total = db::count_feeds(&state.pool).await?;
-    let feeds = db::list_feeds_page(&state.pool, limit, offset).await?;
+    let page_rows = db::list_feeds_page(&state.pool, limit, offset).await?;
+    let ids: Vec<i64> = page_rows.iter().map(|f| f.id).collect();
+    let by_feed = db::tags_by_feed_ids(&state.pool, &ids).await?;
+    let feeds = page_rows
+        .into_iter()
+        .map(|f| FeedWithTags {
+            tags: by_feed.get(&f.id).cloned().unwrap_or_default(),
+            feed: f,
+        })
+        .collect();
     Ok(Json(FeedsResponse {
         feeds,
         total,
@@ -55,8 +72,6 @@ pub(super) struct CreateFeedBody {
     pub poll_interval_seconds: i32,
     #[serde(default)]
     pub telegram_max_items: Option<i32>,
-    #[serde(default)]
-    pub expand_article_from_link: Option<bool>,
 }
 
 fn default_poll_interval() -> i32 {
@@ -84,18 +99,12 @@ pub(super) async fn create_feed(
     } else {
         500
     };
-    let expand_from_link = if is_telegram_preview_url(&url) {
-        false
-    } else {
-        body.expand_article_from_link.unwrap_or(false)
-    };
     let id = db::create_feed(
         state.db_write.as_ref(),
         &state.pool,
         &url,
         interval,
         tg_max,
-        expand_from_link,
     )
     .await?;
     Ok((StatusCode::CREATED, Json(CreateFeedResponse { id })))
@@ -137,29 +146,6 @@ pub(super) async fn update_feed_telegram_max_items(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Deserialize)]
-pub(super) struct ExpandFromLinkBody {
-    pub expand_article_from_link: bool,
-}
-
-pub(super) async fn update_feed_expand_from_link(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(body): Json<ExpandFromLinkBody>,
-) -> Result<StatusCode, AppError> {
-    if db::get_feed(&state.pool, id).await?.is_none() {
-        return Err(AppError::NotFound);
-    }
-    db::update_feed_expand_article_from_link(
-        state.db_write.as_ref(),
-        &state.pool,
-        id,
-        body.expand_article_from_link,
-    )
-    .await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
 pub(super) async fn delete_feed(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -167,5 +153,24 @@ pub(super) async fn delete_feed(
     if !db::delete_feed(state.db_write.as_ref(), &state.pool, id).await? {
         return Err(AppError::NotFound);
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub(super) struct PutFeedTagsBody {
+    pub tag_ids: Vec<i64>,
+}
+
+pub(super) async fn put_feed_tags(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(mut body): Json<PutFeedTagsBody>,
+) -> Result<StatusCode, AppError> {
+    body.tag_ids.sort_unstable();
+    body.tag_ids.dedup();
+    if body.tag_ids.len() > 50 {
+        return Err(AppError::BadRequest("too many tag_ids (max 50)".into()));
+    }
+    db::set_feed_tags(state.db_write.as_ref(), &state.pool, id, &body.tag_ids).await?;
     Ok(StatusCode::NO_CONTENT)
 }

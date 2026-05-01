@@ -3,9 +3,9 @@
 mod articles;
 mod feeds;
 mod logs;
-mod screenshots;
+mod tags;
 
 pub use articles::*;
 pub use feeds::*;
 pub use logs::*;
-pub use screenshots::*;
+pub use tags::*;

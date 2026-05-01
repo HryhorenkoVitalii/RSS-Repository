@@ -315,6 +315,8 @@ pub async fn list_article_reaction_history(
 #[derive(Debug, Clone, Default)]
 pub struct ArticleFilter {
     pub feed_ids: Vec<i64>,
+    /// Feeds that have any of these tags (OR). Empty = no tag filter.
+    pub tag_ids: Vec<i64>,
     pub only_modified: bool,
     pub last_fetched_from: Option<DateTime<Utc>>,
     pub last_fetched_before: Option<DateTime<Utc>>,
@@ -334,6 +336,14 @@ fn push_article_where(b: &mut QueryBuilder<'_, Sqlite>, f: &ArticleFilter) {
             }
             sep.push_unseparated(")");
         }
+    }
+    if !f.tag_ids.is_empty() {
+        b.push(" AND a.feed_id IN (SELECT DISTINCT feed_id FROM feed_tags WHERE tag_id IN (");
+        let mut sep = b.separated(", ");
+        for &tid in &f.tag_ids {
+            sep.push_bind(tid);
+        }
+        sep.push_unseparated("))");
     }
     if f.only_modified {
         b.push(" AND (SELECT COUNT(*) FROM article_contents c WHERE c.article_id = a.id) > 1");

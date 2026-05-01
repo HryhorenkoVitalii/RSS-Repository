@@ -11,10 +11,13 @@ use crate::error::AppError;
 use crate::routes::AppState;
 
 const MAX_FEED_IDS: usize = 50;
+const MAX_TAG_IDS: usize = 50;
 
 #[derive(Deserialize, Default)]
 pub(crate) struct ArticlesQuery {
     pub feed_id: Option<String>,
+    /// Comma-separated tag ids: articles whose feed has any of these tags.
+    pub tag_id: Option<String>,
     pub modified_only: Option<String>,
     pub page: Option<i64>,
     pub date_from: Option<String>,
@@ -73,11 +76,21 @@ fn parse_feed_ids(raw: &Option<String>) -> Vec<i64> {
     }
 }
 
+fn parse_tag_ids(raw: &Option<String>) -> Vec<i64> {
+    parse_feed_ids(raw)
+}
+
 fn article_filter_from_query(q: &ArticlesQuery) -> Result<ArticleFilter, AppError> {
     let feed_ids = parse_feed_ids(&q.feed_id);
     if feed_ids.len() > MAX_FEED_IDS {
         return Err(AppError::BadRequest(format!(
             "too many feed_id values (max {MAX_FEED_IDS})"
+        )));
+    }
+    let tag_ids = parse_tag_ids(&q.tag_id);
+    if tag_ids.len() > MAX_TAG_IDS {
+        return Err(AppError::BadRequest(format!(
+            "too many tag_id values (max {MAX_TAG_IDS})"
         )));
     }
     let only_modified = matches!(q.modified_only.as_deref(), Some("true" | "on" | "1"));
@@ -98,6 +111,7 @@ fn article_filter_from_query(q: &ArticlesQuery) -> Result<ArticleFilter, AppErro
     }
     Ok(ArticleFilter {
         feed_ids,
+        tag_ids,
         only_modified,
         last_fetched_from,
         last_fetched_before,

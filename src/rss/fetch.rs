@@ -1,8 +1,11 @@
+use std::io::Cursor;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 
+use atom_syndication::Feed as AtomFeed;
+use chrono::Utc;
 use reqwest::Url;
-use rss::Channel;
+use rss::{Channel, Guid, Item};
 
 use crate::browser_http::{headers_for, FetchProfile};
 use crate::http_retry;
@@ -15,15 +18,10 @@ const MAX_ITEMS_PER_FEED: usize = 500;
 pub enum FeedFetchError {
     #[error("http: {0}")]
     Http(#[from] reqwest::Error),
-    /// HTML article page fetch (expand-from-link), not RSS XML.
-    #[error("{0}")]
-    ArticlePage(String),
     #[error("invalid feed xml: {0}")]
     Parse(String),
     #[error("feed exceeds {MAX_FEED_BYTES} bytes")]
     TooLarge,
-    #[error("страница больше лимита ({0} МБ)")]
-    PageTooLargeMb(usize),
     #[error("invalid url")]
     BadUrl,
     #[error("url scheme must be http or https")]
@@ -87,6 +85,141 @@ pub fn validate_feed_url(feed_url: &str) -> Result<Url, FeedFetchError> {
     Ok(url)
 }
 
+fn atom_entry_link(entry: &atom_syndication::Entry) -> Option<String> {
+    entry
+        .links
+        .iter()
+        .find(|l| l.rel == "alternate" || l.rel.is_empty())
+        .or_else(|| entry.links.first())
+        .map(|l| l.href.clone())
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// MRSS (`media:group` / `media:thumbnail`) — так YouTube и часть других Atom-фидов отдают превью без `<img>` в теле.
+fn atom_media_thumbnail_url(entry: &atom_syndication::Entry) -> Option<String> {
+    for ns_map in entry.extensions.values() {
+        if let Some(groups) = ns_map.get("group") {
+            for group in groups {
+                if let Some(thumbs) = group.children.get("thumbnail") {
+                    for thumb in thumbs {
+                        if let Some(u) = thumb.attrs.get("url") {
+                            let u = u.trim();
+                            if !u.is_empty() {
+                                return Some(u.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn atom_entry_html(entry: &atom_syndication::Entry) -> String {
+    let mut html = String::new();
+    if let Some(c) = &entry.content {
+        if let Some(v) = &c.value {
+            if !v.trim().is_empty() {
+                html = v.clone();
+            }
+        }
+    }
+    if html.is_empty() {
+        if let Some(s) = &entry.summary {
+            let t = s.as_str().trim();
+            if !t.is_empty() {
+                html = match s.r#type {
+                    atom_syndication::TextType::Html => s.value.clone(),
+                    _ => format!("<p>{}</p>", html_escape::encode_text(s.as_str())),
+                };
+            }
+        }
+    }
+    if let Some(u) = atom_media_thumbnail_url(entry) {
+        let src = html_escape::encode_double_quoted_attribute(&u);
+        let img = format!(
+            r#"<p><img src="{src}" alt="" loading="lazy" style="max-width:100%;height:auto"/></p>"#
+        );
+        html = if html.is_empty() {
+            img
+        } else {
+            format!("{img}{html}")
+        };
+    }
+    // Ссылка на страницу записи: после появления превью `html` уже не пустой — добавляем явно,
+    // если эта же ссылка ещё не встречается в теле (описание без URL и т.п.).
+    if let Some(url) = atom_entry_link(entry) {
+        if !html.contains(url.as_str()) {
+            let href = html_escape::encode_double_quoted_attribute(&url);
+            let link_line = format!(
+                r#"<p><a href="{href}" rel="noopener noreferrer">Открыть источник</a></p>"#
+            );
+            html = if html.is_empty() {
+                link_line
+            } else {
+                format!("{html}{link_line}")
+            };
+        }
+    }
+    html
+}
+
+/// YouTube и многие сервисы отдают Atom (`<feed xmlns="http://www.w3.org/2005/Atom">`), а не RSS 2.0.
+fn channel_from_atom(bytes: &[u8]) -> Result<Channel, FeedFetchError> {
+    let atom = AtomFeed::read_from(Cursor::new(bytes))
+        .map_err(|e| FeedFetchError::Parse(format!("atom: {e}")))?;
+
+    let feed_link = atom
+        .links
+        .iter()
+        .find(|l| l.rel == "alternate" || l.rel == "self" || l.rel.is_empty())
+        .or_else(|| atom.links.first())
+        .map(|l| l.href.clone())
+        .unwrap_or_default();
+
+    let mut channel = Channel::default();
+    channel.set_title(atom.title.to_string());
+    channel.set_link(feed_link);
+    channel.set_description(format!("Atom: {}", atom.title.as_str()));
+
+    let mut items: Vec<Item> = Vec::with_capacity(atom.entries.len());
+    for e in atom.entries.into_iter() {
+        let html = atom_entry_html(&e);
+        let when = e
+            .published
+            .unwrap_or(e.updated)
+            .with_timezone(&Utc)
+            .to_rfc2822();
+        let link = atom_entry_link(&e);
+        let title = e.title.to_string();
+        let id = e.id;
+        let mut it = Item::default();
+        it.set_title(Some(title));
+        if let Some(l) = link {
+            it.set_link(Some(l));
+        }
+        let mut g = Guid::default();
+        g.set_value(id);
+        g.set_permalink(false);
+        it.set_guid(Some(g));
+        if !html.is_empty() {
+            it.set_content(Some(html));
+        }
+        it.set_pub_date(Some(when));
+        items.push(it);
+    }
+    channel.set_items(items);
+    Ok(channel)
+}
+
+fn parse_feed_xml(bytes: &[u8]) -> Result<Channel, FeedFetchError> {
+    if let Ok(ch) = Channel::read_from(bytes) {
+        return Ok(ch);
+    }
+    channel_from_atom(bytes)
+}
+
 pub async fn fetch_and_parse(
     client: &reqwest::Client,
     feed_url: &str,
@@ -107,8 +240,39 @@ pub async fn fetch_and_parse(
     if bytes.len() > MAX_FEED_BYTES {
         return Err(FeedFetchError::TooLarge);
     }
-    let mut channel =
-        Channel::read_from(&bytes[..]).map_err(|e| FeedFetchError::Parse(e.to_string()))?;
+    let mut channel = parse_feed_xml(&bytes[..])?;
     channel.items.truncate(MAX_ITEMS_PER_FEED);
     Ok(channel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::channel_from_atom;
+
+    #[test]
+    fn atom_youtube_mrss_thumbnail_becomes_img_in_content() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <id>feed</id>
+  <title>T</title>
+  <updated>2020-01-01T00:00:00Z</updated>
+  <entry>
+    <id>e1</id>
+    <title>E</title>
+    <updated>2020-01-01T00:00:00Z</updated>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=abc"/>
+    <media:group>
+      <media:thumbnail url="https://i.ytimg.com/vi/abc/hqdefault.jpg" width="480" height="360"/>
+    </media:group>
+  </entry>
+</feed>"#;
+        let ch = channel_from_atom(xml).expect("parse atom");
+        let html = ch.items()[0].content().expect("content set");
+        assert!(html.contains("hqdefault.jpg"), "{html}");
+        assert!(html.contains("<img"), "{html}");
+        assert!(
+            html.contains("watch?v=abc") && html.contains("Открыть источник"),
+            "alternate link preserved with thumbnail: {html}"
+        );
+    }
 }

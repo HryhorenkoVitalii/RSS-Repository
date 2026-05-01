@@ -2,7 +2,6 @@
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, REFERER, USER_AGENT};
 use reqwest::Url;
-use serde_json::{Map, Value};
 
 use crate::env_util::{env_trim, env_truthy};
 
@@ -28,7 +27,7 @@ const DEFAULT_SEC_CH_UA: &str =
 
 const DEFAULT_SEC_CH_UA_PLATFORM: &str = "\"Windows\"";
 
-/// Строка User-Agent для `reqwest::Client::builder().user_agent(...)` и для CDP.
+/// Строка User-Agent для `reqwest::Client::builder().user_agent(...)`.
 pub fn default_user_agent_string() -> String {
     env_trim("HTTP_BROWSER_USER_AGENT").unwrap_or_else(|| DEFAULT_UA.to_string())
 }
@@ -43,7 +42,7 @@ pub enum FetchProfile {
     MediaAsset,
 }
 
-/// Заголовки для `reqwest` (и база для CDP `Network.setExtraHTTPHeaders`).
+/// Заголовки для `reqwest`.
 pub fn headers_for(profile: FetchProfile, request_url: &str) -> Result<HeaderMap, String> {
     let mut m = HeaderMap::new();
 
@@ -160,33 +159,6 @@ pub fn headers_for(profile: FetchProfile, request_url: &str) -> Result<HeaderMap
 
     apply_extra_headers(&mut m)?;
     Ok(m)
-}
-
-/// Строки для `Emulation.setUserAgentOverride` (без парсинга HeaderMap).
-pub fn cdp_user_agent_parts() -> (String, String, String) {
-    let ua = default_user_agent_string();
-    let lang = env_trim("HTTP_BROWSER_ACCEPT_LANGUAGE")
-        .unwrap_or_else(|| DEFAULT_ACCEPT_LANGUAGE.to_string());
-    let platform = env_trim("HTTP_BROWSER_PLATFORM").unwrap_or_else(|| "Windows".to_string());
-    (ua, lang, platform)
-}
-
-/// Дополнительные заголовки навигации для CDP (`Network.setExtraHTTPHeaders`).
-pub fn cdp_network_extra_headers_json(profile: FetchProfile, page_url: &str) -> Result<Value, String> {
-    let m = headers_for(profile, page_url)?;
-    let mut obj = Map::new();
-    for (name, value) in m.iter() {
-        // User-Agent задаётся через Emulation.setUserAgentOverride.
-        if name == USER_AGENT {
-            continue;
-        }
-        let key = name.as_str();
-        let val = value
-            .to_str()
-            .map_err(|_| format!("заголовок {key}: не UTF-8"))?;
-        obj.insert(key.to_string(), Value::String(val.to_string()));
-    }
-    Ok(Value::Object(obj))
 }
 
 fn apply_extra_headers(m: &mut HeaderMap) -> Result<(), String> {

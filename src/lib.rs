@@ -3,16 +3,11 @@
 mod env_util;
 mod http_retry;
 mod browser_http;
-mod chromium_binary;
-mod screenshot_env;
-mod screenshot_trim;
 mod article_expand;
 pub mod db;
 mod error;
 mod ingest;
 mod media;
-mod chromium_cdp;
-mod page_screenshot;
 pub mod routes;
 mod rss;
 mod scheduler;

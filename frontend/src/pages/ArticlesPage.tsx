@@ -1,21 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatArticlesListForAi } from '../aiScreenDigest';
 import { useAiScreenSection } from '../aiScreenContext';
 import {
-  isChromiumScreenshotBody,
+  DEFAULT_TAG_COLOR,
   isFullPageArchiveBody,
   listAllFeeds,
   listArticles,
+  listTags,
   type Article,
   type Feed,
+  type Tag,
 } from '../api';
 import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
 import { feedRssPath } from '../feedRss';
 import { formatDateTime } from '../formatTime';
 import { PaginationBar } from '../PaginationBar';
+import { pickTagChipTextColor } from '../tagChipText';
 
-function parseFeedIds(raw: string | null): string[] {
+function parseCommaSepIds(raw: string | null): string[] {
   if (!raw) return [];
   return raw.split(',').map((s) => s.trim()).filter(Boolean);
 }
@@ -29,7 +32,7 @@ function parseViewMode(raw: string | null): ArticleViewMode {
 /** First usable image URL from stored article HTML (img src or video poster). */
 function firstImageUrlFromArticle(html: string): string | null {
   // Полностраничный PNG — слишком высокий для превью; cover обрезает «не туда» и часто даёт чёрные полосы.
-  if (!html || isFullPageArchiveBody(html) || isChromiumScreenshotBody(html)) return null;
+  if (!html || isFullPageArchiveBody(html)) return null;
   const imgRe = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
   let m: RegExpExecArray | null;
   while ((m = imgRe.exec(html)) !== null) {
@@ -59,7 +62,8 @@ function firstImageUrlFromArticle(html: string): string | null {
 
 export function ArticlesPage() {
   const [search, setSearch] = useSearchParams();
-  const feedIds = parseFeedIds(search.get('feed_id'));
+  const feedIds = parseCommaSepIds(search.get('feed_id'));
+  const tagIds = parseCommaSepIds(search.get('tag_id'));
   const modifiedOnly = search.get('modified_only') === 'true';
   const page = Math.max(0, Number(search.get('page') ?? '0') || 0);
   const dateFrom = search.get('date_from') ?? '';
@@ -67,6 +71,7 @@ export function ArticlesPage() {
   const viewMode = parseViewMode(search.get('view'));
 
   const [feeds, setFeeds] = useState<Feed[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
   const [articles, setArticles] = useState<Article[]>([]);
   const [total, setTotal] = useState(0);
   const [limit, setLimit] = useState(50);
@@ -79,12 +84,19 @@ export function ArticlesPage() {
       .catch(() => setFeeds([]));
   }, []);
 
+  useEffect(() => {
+    void listTags()
+      .then(setAllTags)
+      .catch(() => setAllTags([]));
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
       const r = await listArticles({
         feedIds: feedIds.length > 0 ? feedIds : undefined,
+        tagIds: tagIds.length > 0 ? tagIds : undefined,
         modifiedOnly,
         page,
         dateFrom: dateFrom || undefined,
@@ -101,7 +113,7 @@ export function ArticlesPage() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [feedIds.join(','), modifiedOnly, page, dateFrom, dateTo]);
+  }, [feedIds.join(','), tagIds.join(','), modifiedOnly, page, dateFrom, dateTo]);
 
   useEffect(() => {
     void load();
@@ -127,9 +139,24 @@ export function ArticlesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedIds.join(',')]);
 
+  const [pendingTagIds, setPendingTagIds] = useState<string[]>(tagIds);
+  useEffect(() => {
+    setPendingTagIds(tagIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tagIds.join(',')]);
+
+  const [feedSearch, setFeedSearch] = useState('');
+  const [tagSearch, setTagSearch] = useState('');
+
   function toggleFeed(id: string) {
     setPendingFeedIds((prev) =>
       prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id],
+    );
+  }
+
+  function toggleTag(id: string) {
+    setPendingTagIds((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id],
     );
   }
 
@@ -142,6 +169,8 @@ export function ArticlesPage() {
         const p = new URLSearchParams(prev);
         if (pendingFeedIds.length > 0) p.set('feed_id', pendingFeedIds.join(','));
         else p.delete('feed_id');
+        if (pendingTagIds.length > 0) p.set('tag_id', pendingTagIds.join(','));
+        else p.delete('tag_id');
         if (fd.get('modified_only')) p.set('modified_only', 'true');
         else p.delete('modified_only');
         const df = (fd.get('date_from') as string) ?? '';
@@ -156,7 +185,6 @@ export function ArticlesPage() {
       { replace: true },
     );
     setFiltersOpen(false);
-    setFeedDropdownOpen(false);
   }
 
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
@@ -164,35 +192,23 @@ export function ArticlesPage() {
   const rssParams = useMemo(
     () => ({
       feedIds: feedIds.map(Number).filter((n) => !isNaN(n)),
+      tagIds: tagIds.map(Number).filter((n) => !isNaN(n)),
       modifiedOnly,
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [feedIds.join(','), modifiedOnly, dateFrom, dateTo],
+    [feedIds.join(','), tagIds.join(','), modifiedOnly, dateFrom, dateTo],
   );
 
-  const [feedDropdownOpen, setFeedDropdownOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const filtersDrawerRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setFeedDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
 
   useEffect(() => {
     if (!filtersOpen) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         setFiltersOpen(false);
-        setFeedDropdownOpen(false);
       }
     }
     document.addEventListener('keydown', onKey);
@@ -206,24 +222,44 @@ export function ArticlesPage() {
       const el = filtersDrawerRef.current;
       if (!el || el.contains(e.target as Node)) return;
       setFiltersOpen(false);
-      setFeedDropdownOpen(false);
     }
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [filtersOpen]);
 
-  const selectedLabel = useMemo(() => {
-    if (pendingFeedIds.length === 0) return 'All feeds';
-    if (pendingFeedIds.length === 1) {
-      const f = feeds.find((f) => String(f.id) === pendingFeedIds[0]);
-      return f ? f.title?.trim() || f.url : `Feed #${pendingFeedIds[0]}`;
-    }
-    return `${pendingFeedIds.length} feeds selected`;
-  }, [pendingFeedIds, feeds]);
+  const sortedTags = useMemo(
+    () => [...allTags].sort((a, b) => a.name.localeCompare(b.name)),
+    [allTags],
+  );
+
+  const filteredFeeds = useMemo(() => {
+    const q = feedSearch.trim().toLowerCase();
+    if (!q) return feeds;
+    return feeds.filter((f) => {
+      const title = (f.title ?? '').toLowerCase();
+      const url = f.url.toLowerCase();
+      return title.includes(q) || url.includes(q);
+    });
+  }, [feeds, feedSearch]);
+
+  const filteredTags = useMemo(() => {
+    const q = tagSearch.trim().toLowerCase();
+    if (!q) return sortedTags;
+    return sortedTags.filter((t) => t.name.toLowerCase().includes(q));
+  }, [sortedTags, tagSearch]);
 
   const feedMap = useMemo(() => {
     const m = new Map<number, string>();
     for (const f of feeds) m.set(f.id, f.title?.trim() || f.url);
+    return m;
+  }, [feeds]);
+
+  const feedTagsByFeedId = useMemo(() => {
+    const m = new Map<number, Tag[]>();
+    for (const f of feeds) {
+      const tags = (f.tags ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+      m.set(f.id, tags);
+    }
     return m;
   }, [feeds]);
 
@@ -232,11 +268,14 @@ export function ArticlesPage() {
     if (feedIds.length > 0) {
       bits.push(feedIds.length === 1 ? '1 feed' : `${feedIds.length} feeds`);
     }
+    if (tagIds.length > 0) {
+      bits.push(tagIds.length === 1 ? '1 tag' : `${tagIds.length} tags`);
+    }
     if (modifiedOnly) bits.push('modified');
     if (dateFrom) bits.push(`from ${dateFrom}`);
     if (dateTo) bits.push(`to ${dateTo}`);
     return bits.length > 0 ? bits.join(' · ') : 'No extra filters';
-  }, [feedIds, modifiedOnly, dateFrom, dateTo]);
+  }, [feedIds, tagIds, modifiedOnly, dateFrom, dateTo]);
 
   const articlesScreenDigest = useMemo(() => {
     if (loading) return null;
@@ -289,78 +328,172 @@ export function ArticlesPage() {
                   <button
                     type="button"
                     className="articles-filters-close"
-                    onClick={() => {
-                      setFiltersOpen(false);
-                      setFeedDropdownOpen(false);
-                    }}
+                    onClick={() => setFiltersOpen(false)}
                     aria-label="Close filters"
                   >
                     ×
                   </button>
                 </div>
-                <form className="filters" onSubmit={onApplyFilters} ref={formRef}>
-                  <div className="form-row" style={{ marginTop: '0.75rem' }}>
-                    <div className="feed-multi-select" ref={dropdownRef}>
-                      <label>Feeds</label>
+                <form className="filters filters-panel-form" onSubmit={onApplyFilters} ref={formRef}>
+                  <section className="filters-panel-section" aria-labelledby="filters-feeds-heading">
+                    <div className="filters-panel-head">
+                      <div>
+                        <h3 id="filters-feeds-heading" className="filters-panel-label">
+                          Feeds
+                        </h3>
+                        <p className="filters-panel-hint muted small">
+                          {pendingFeedIds.length === 0
+                            ? 'Showing all feeds'
+                            : `${pendingFeedIds.length} selected · OR within feeds`}
+                        </p>
+                      </div>
                       <button
                         type="button"
-                        className="feed-multi-toggle"
-                        onClick={() => setFeedDropdownOpen((v) => !v)}
+                        className="btn-ghost btn-compact"
+                        disabled={pendingFeedIds.length === 0}
+                        onClick={() => setPendingFeedIds([])}
                       >
-                        <span className="feed-multi-toggle-text">{selectedLabel}</span>
-                        <span className="feed-multi-toggle-arrow">
-                          {feedDropdownOpen ? '▴' : '▾'}
-                        </span>
+                        Clear
                       </button>
-                      {feedDropdownOpen && (
-                        <div className="feed-multi-dropdown">
-                          <label className="feed-multi-option">
-                            <input
-                              type="checkbox"
-                              checked={pendingFeedIds.length === 0}
-                              onChange={() => setPendingFeedIds([])}
-                            />
-                            <span>All feeds</span>
-                          </label>
-                          {feeds.map((f) => (
-                            <label key={f.id} className="feed-multi-option">
+                    </div>
+                    <input
+                      type="search"
+                      className="filters-panel-search"
+                      placeholder="Search by title or URL…"
+                      value={feedSearch}
+                      onChange={(e) => setFeedSearch(e.target.value)}
+                      aria-label="Search feeds"
+                      autoComplete="off"
+                    />
+                    <div
+                      className="filters-panel-scroll"
+                      role="group"
+                      aria-label="Feed list"
+                    >
+                      {feeds.length === 0 ? (
+                        <p className="filters-panel-empty muted small">No feeds yet.</p>
+                      ) : filteredFeeds.length === 0 ? (
+                        <p className="filters-panel-empty muted small">No feeds match search.</p>
+                      ) : (
+                        filteredFeeds.map((f) => {
+                          const title = f.title?.trim() || '';
+                          const primary = title || f.url;
+                          const showUrl = Boolean(title && title !== f.url);
+                          return (
+                            <label key={f.id} className="filters-panel-option">
                               <input
                                 type="checkbox"
                                 checked={pendingFeedIds.includes(String(f.id))}
                                 onChange={() => toggleFeed(String(f.id))}
                               />
-                              <span>{f.title?.trim() || f.url}</span>
+                              <span className="filters-panel-option-text">
+                                <span className="filters-panel-option-primary">{primary}</span>
+                                {showUrl ? (
+                                  <span className="filters-panel-option-secondary muted">
+                                    {f.url}
+                                  </span>
+                                ) : null}
+                              </span>
                             </label>
-                          ))}
-                        </div>
+                          );
+                        })
                       )}
                     </div>
-                    <label
-                      className="small"
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: '0.4rem',
-                      }}
+                  </section>
+
+                  <section className="filters-panel-section" aria-labelledby="filters-tags-heading">
+                    <div className="filters-panel-head">
+                      <div>
+                        <h3 id="filters-tags-heading" className="filters-panel-label">
+                          Tags
+                        </h3>
+                        <p className="filters-panel-hint muted small">
+                          {pendingTagIds.length === 0
+                            ? 'Any tag (not filtering by tag)'
+                            : `${pendingTagIds.length} selected · OR match`}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-compact"
+                        disabled={pendingTagIds.length === 0}
+                        onClick={() => setPendingTagIds([])}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <input
+                      type="search"
+                      className="filters-panel-search"
+                      placeholder="Search tags…"
+                      value={tagSearch}
+                      onChange={(e) => setTagSearch(e.target.value)}
+                      aria-label="Search tags"
+                      autoComplete="off"
+                    />
+                    <div
+                      className="filters-panel-scroll"
+                      role="group"
+                      aria-label="Tag list"
                     >
+                      {allTags.length === 0 ? (
+                        <p className="filters-panel-empty muted small">
+                          No tags yet — create them under Feeds → Tags.
+                        </p>
+                      ) : filteredTags.length === 0 ? (
+                        <p className="filters-panel-empty muted small">No tags match search.</p>
+                      ) : (
+                        filteredTags.map((t) => (
+                          <label
+                            key={t.id}
+                            className="filters-panel-option filters-panel-option--tag"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={pendingTagIds.includes(String(t.id))}
+                              onChange={() => toggleTag(String(t.id))}
+                            />
+                            <span
+                              className="tag-color-dot"
+                              style={{ backgroundColor: t.color }}
+                              aria-hidden
+                            />
+                            <span className="filters-panel-option-primary">{t.name}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="filters-panel-section filters-panel-section--compact">
+                    <h3 className="filters-panel-label">Date &amp; updates</h3>
+                    <div className="filters-panel-dates">
+                      <label className="filters-panel-date-field">
+                        <span className="filters-panel-date-label">From</span>
+                        <input type="date" name="date_from" defaultValue={dateFrom} />
+                      </label>
+                      <label className="filters-panel-date-field">
+                        <span className="filters-panel-date-label">To</span>
+                        <input type="date" name="date_to" defaultValue={dateTo} />
+                      </label>
+                    </div>
+                    <label className="filters-panel-checkbox">
                       <input
                         type="checkbox"
                         name="modified_only"
                         value="true"
                         defaultChecked={modifiedOnly}
                       />
-                      Modified only
+                      <span>Modified only</span>
                     </label>
-                    <label>
-                      From
-                      <input type="date" name="date_from" defaultValue={dateFrom} />
-                    </label>
-                    <label>
-                      To
-                      <input type="date" name="date_to" defaultValue={dateTo} />
-                    </label>
-                    <button type="submit">Apply</button>
+                  </section>
+
+                  <div className="filters-panel-actions">
+                    <button type="submit" className="btn-primary filters-panel-apply">
+                      Apply filters
+                    </button>
                   </div>
+
                   <div className="articles-filters-rss-row">
                     <a
                       className="btn-rss-export"
@@ -414,7 +547,12 @@ export function ArticlesPage() {
                   <p className="muted article-tiles-empty">No articles match the current filters.</p>
                 ) : (
                   articles.map((a) => (
-                    <ArticleTile key={a.id} article={a} feedName={feedMap.get(a.feed_id)} />
+                    <ArticleTile
+                      key={a.id}
+                      article={a}
+                      feedName={feedMap.get(a.feed_id)}
+                      feedTags={feedTagsByFeedId.get(a.feed_id) ?? []}
+                    />
                   ))
                 )}
               </div>
@@ -424,7 +562,12 @@ export function ArticlesPage() {
                   <li className="muted">No articles match the current filters.</li>
                 ) : (
                   articles.map((a) => (
-                    <ArticleRow key={a.id} article={a} feedName={feedMap.get(a.feed_id)} />
+                    <ArticleRow
+                      key={a.id}
+                      article={a}
+                      feedName={feedMap.get(a.feed_id)}
+                      feedTags={feedTagsByFeedId.get(a.feed_id) ?? []}
+                    />
                   ))
                 )}
               </ul>
@@ -474,7 +617,15 @@ function ArticleTileCover({ src }: { src: string | null }) {
   );
 }
 
-function ArticleTile({ article: a, feedName }: { article: Article; feedName?: string }) {
+function ArticleTile({
+  article: a,
+  feedName,
+  feedTags,
+}: {
+  article: Article;
+  feedName?: string;
+  feedTags: Tag[];
+}) {
   const imgUrl = useMemo(() => firstImageUrlFromArticle(a.body), [a.body]);
   const published = formatDateTime(a.published_at ?? undefined);
   const fetched = formatDateTime(a.last_fetched_at);
@@ -483,14 +634,25 @@ function ArticleTile({ article: a, feedName }: { article: Article; feedName?: st
       <span className="badge">{a.content_version_count} ver</span>
     ) : null;
   const rx = a.telegram_reactions ?? [];
+  const tagAccent = feedTags[0]?.color ?? DEFAULT_TAG_COLOR;
 
   return (
-    <article className="article-tile">
+    <article
+      className={
+        'article-tile' + (feedTags.length > 0 ? ' article-tile--tagged' : '')
+      }
+      style={
+        feedTags.length > 0
+          ? ({ ['--feed-tag-accent' as string]: tagAccent } as CSSProperties)
+          : undefined
+      }
+    >
       <Link to={`/articles/${a.id}`} className="article-tile-link">
         <ArticleTileCover src={imgUrl} />
         <div className="article-tile-body">
           <h3 className="article-tile-heading">{a.title || '(no title)'}</h3>
           {versions ? <div className="article-tile-badges">{versions}</div> : null}
+          <ArticleTagChips tags={feedTags} className="feed-card-tag-chips article-tile-tag-chips" />
         </div>
       </Link>
       {rx.length > 0 ? (
@@ -507,7 +669,15 @@ function ArticleTile({ article: a, feedName }: { article: Article; feedName?: st
   );
 }
 
-function ArticleRow({ article: a, feedName }: { article: Article; feedName?: string }) {
+function ArticleRow({
+  article: a,
+  feedName,
+  feedTags,
+}: {
+  article: Article;
+  feedName?: string;
+  feedTags: Tag[];
+}) {
   const published = formatDateTime(a.published_at ?? undefined);
   const fetched = formatDateTime(a.last_fetched_at);
   const versions =
@@ -515,13 +685,22 @@ function ArticleRow({ article: a, feedName }: { article: Article; feedName?: str
       <span className="badge">{a.content_version_count} ver</span>
     ) : null;
   const rx = a.telegram_reactions ?? [];
+  const tagAccent = feedTags[0]?.color ?? DEFAULT_TAG_COLOR;
 
   return (
-    <li>
+    <li
+      className={feedTags.length > 0 ? 'article-row--tagged' : undefined}
+      style={
+        feedTags.length > 0
+          ? ({ ['--feed-tag-accent' as string]: tagAccent } as CSSProperties)
+          : undefined
+      }
+    >
       <div>
         <Link to={`/articles/${a.id}`}>{a.title || '(no title)'}</Link>
         {versions}
       </div>
+      <ArticleTagChips tags={feedTags} className="feed-card-tag-chips article-row-tag-chips" />
       {rx.length > 0 ? (
         <div className="article-row-reactions">
           <TelegramReactionsStrip articleId={a.id} reactions={rx} />
@@ -533,5 +712,32 @@ function ArticleRow({ article: a, feedName }: { article: Article; feedName?: str
         <span title={fetched.title}>Fetched {fetched.display}</span>
       </div>
     </li>
+  );
+}
+
+function ArticleTagChips({
+  tags,
+  className,
+}: {
+  tags: Tag[];
+  className?: string;
+}) {
+  if (tags.length === 0) return null;
+  return (
+    <div className={className} role="list" aria-label="Tags">
+      {tags.map((t) => (
+        <span
+          key={t.id}
+          role="listitem"
+          className="feed-tag-chip"
+          style={{
+            backgroundColor: t.color,
+            color: pickTagChipTextColor(t.color),
+          }}
+        >
+          {t.name}
+        </span>
+      ))}
+    </div>
   );
 }

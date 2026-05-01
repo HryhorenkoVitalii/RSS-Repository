@@ -33,7 +33,7 @@ pub fn article_guid(item: &Item) -> Result<String, regex::Error> {
     Ok(format!("link:{}", hex::encode(h.finalize())))
 }
 
-/// Strip tags and collapse whitespace (used for hashing any HTML body, including after expand-from-link).
+/// Strip tags and collapse whitespace (used for hashing any HTML body).
 pub fn plain_fingerprint(html: impl AsRef<str>) -> Result<String, regex::Error> {
     normalize_plain(html)
 }

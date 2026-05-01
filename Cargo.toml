@@ -15,6 +15,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate", "chrono", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "deflate", "json"] }
 rss = "2.0"
+atom_syndication = { version = "0.12", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower-http = { version = "0.6", features = ["cors"] }
@@ -30,9 +31,6 @@ regex = "1"
 once_cell = "1"
 ammonia = "4"
 scraper = "0.22"
-tokio-tungstenite = "0.24"
-base64 = "0.22"
-image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

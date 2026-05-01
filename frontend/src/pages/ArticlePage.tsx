@@ -1,17 +1,13 @@
 import DOMPurify from 'dompurify';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { formatArticleDetailForAi } from '../aiScreenDigest';
 import { useAiScreenSection } from '../aiScreenContext';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
-  archiveArticleFullPageNow,
   ARTICLE_NOT_FOUND_MESSAGE,
-  expandArticleFromLinkNow,
   fetchArticleArchiveBlobUrl,
   getArticle,
-  isChromiumScreenshotBody,
   isFullPageArchiveBody,
-  type Article,
   type ArticleContentVersion,
   type ArticleDetailResponse,
 } from '../api';
@@ -25,46 +21,11 @@ import {
 } from '../versionDiff';
 import { versionLabel } from '../versionTitle';
 
-function canExpandArticleFromLink(article: Article): boolean {
-  const u = article.link?.trim();
-  if (u?.startsWith('http://') || u?.startsWith('https://')) return true;
-  const g = article.guid.trim();
-  return g.startsWith('http://') || g.startsWith('https://');
-}
-
-const PAGE_PULL_MODE_KEY = 'rss_article_page_pull_mode';
-
-type PagePullMode = 'extract' | 'archive';
-
-function readStoredPullMode(): PagePullMode {
-  try {
-    return sessionStorage.getItem(PAGE_PULL_MODE_KEY) === 'archive'
-      ? 'archive'
-      : 'extract';
-  } catch {
-    return 'extract';
-  }
-}
-
 export function ArticlePage() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const numId = Number(id);
   const [data, setData] = useState<ArticleDetailResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [pullMode, setPullModeState] = useState<PagePullMode>(readStoredPullMode);
-  const [remoteBusy, setRemoteBusy] = useState(false);
-  const [remoteMsg, setRemoteMsg] = useState<string | null>(null);
-  const [remoteErr, setRemoteErr] = useState<string | null>(null);
-
-  const setPullMode = useCallback((m: PagePullMode) => {
-    setPullModeState(m);
-    try {
-      sessionStorage.setItem(PAGE_PULL_MODE_KEY, m);
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
   useEffect(() => {
     if (!Number.isFinite(numId)) {
@@ -79,44 +40,6 @@ export function ArticlePage() {
         setErr(e instanceof Error ? e.message : String(e));
       });
   }, [numId]);
-
-  const onLoadFromSourcePage = useCallback(async () => {
-    if (!Number.isFinite(numId)) return;
-    setRemoteBusy(true);
-    setRemoteErr(null);
-    setRemoteMsg(null);
-    try {
-      const res =
-        pullMode === 'extract'
-          ? await expandArticleFromLinkNow(numId)
-          : await archiveArticleFullPageNow(numId);
-      setData({
-        article: res.article,
-        versions: res.versions,
-        ...(res.telegram_reactions
-          ? { telegram_reactions: res.telegram_reactions }
-          : {}),
-      });
-      if (pullMode === 'extract') {
-        setRemoteMsg(
-          res.unchanged
-            ? 'Страница совпадает с уже сохранённым текстом (новая версия не создана).'
-            : 'Основной текст со страницы сохранён как новая версия.',
-        );
-      } else {
-        setRemoteMsg(
-          res.unchanged
-            ? 'Снимок совпадает с предыдущим (байты PNG те же; новая запись не добавлена).'
-            : 'Снимок страницы сохранён: открыт список снимков.',
-        );
-        navigate(`/articles/${numId}/screenshots`);
-      }
-    } catch (e) {
-      setRemoteErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRemoteBusy(false);
-    }
-  }, [numId, pullMode, navigate]);
 
   const articleDetailDigest = useMemo(() => {
     if (!data?.article) return null;
@@ -160,8 +83,6 @@ export function ArticlePage() {
     </a>
   ) : null;
 
-  const showPull = canExpandArticleFromLink(article);
-
   return (
     <>
       <Link to="/" className="back-link">
@@ -174,46 +95,10 @@ export function ArticlePage() {
             <TelegramReactionsStrip articleId={article.id} reactions={telegramRx} />
           </div>
         ) : null}
-        {link || showPull ? (
+        {link ? (
           <div className="article-source-row small">
-            {link ? <span className="article-source-open">{link}</span> : null}
-            {showPull ? (
-              <div className="article-pull-from-page">
-                <Link to={`/articles/${article.id}/screenshots`} className="muted small article-screenshots-link">
-                  Снимки страницы
-                </Link>
-                <label className="article-pull-mode-label">
-                  <span className="muted">Тип загрузки</span>
-                  <select
-                    className="article-page-pull-select"
-                    value={pullMode}
-                    onChange={(e) => setPullMode(e.target.value as PagePullMode)}
-                    disabled={remoteBusy}
-                    aria-label="Тип загрузки со страницы по ссылке"
-                  >
-                    <option value="extract">
-                      Основной текст (вырезанный блок, как в RSS expand)
-                    </option>
-                    <option value="archive">
-                      Снимок страницы (headless Chromium → PNG, как в браузере)
-                    </option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="btn-secondary btn-compact"
-                  disabled={remoteBusy}
-                  onClick={() => void onLoadFromSourcePage()}
-                >
-                  {remoteBusy ? 'Загрузка…' : 'Загрузить со страницы'}
-                </button>
-              </div>
-            ) : null}
+            <span className="article-source-open">{link}</span>
           </div>
-        ) : null}
-        {remoteErr ? <p className="err article-pull-err">{remoteErr}</p> : null}
-        {remoteMsg && !remoteErr ? (
-          <p className="muted small article-pull-msg">{remoteMsg}</p>
         ) : null}
         <div className="meta">
           <span>
@@ -309,9 +194,7 @@ function VersionBlock({
   const fetched = formatDateTime(v.fetched_at);
   const label = versionLabel(index, total);
   const currFull = isFullPageArchiveBody(v.body);
-  const currShot = isChromiumScreenshotBody(v.body);
   const prevFull = prev != null && isFullPageArchiveBody(prev.body);
-  const prevShot = prev != null && isChromiumScreenshotBody(prev.body);
   const showArchiveIframe = currFull;
 
   let titleBlock: ReactNode = null;
@@ -327,7 +210,7 @@ function VersionBlock({
         />
       );
     }
-    if (!prevFull && !currFull && !prevShot && !currShot) {
+    if (!prevFull && !currFull) {
       const prevPlain = htmlToPlainText(prev.body);
       const nextPlain = htmlToPlainText(v.body);
       bodyHtml = inlineWordDiffHtml(prevPlain, nextPlain);
@@ -337,15 +220,12 @@ function VersionBlock({
   }
 
   const archiveNote =
-    currFull || prevFull || currShot || prevShot ? (
+    currFull || prevFull ? (
       <p className="muted small article-archive-note">
         {currFull
           ? 'Полный HTML в iframe: из сохранённой страницы убираются meta CSP/Permissions-Policy, чтобы подтянулись стили с сайта; переходы по ссылкам и отправка форм отключены.'
           : null}
-        {currShot && !currFull
-          ? 'Снимок сделан headless Chromium (как при открытии страницы); высота ограничена окном браузера.'
-          : null}
-        {prev != null && (prevFull || currFull || prevShot || currShot)
+        {prev != null && (prevFull || currFull)
           ? ' Построчное сравнение с прошлой версией для этих режимов не строится.'
           : null}
       </p>
@@ -365,8 +245,6 @@ function VersionBlock({
           {label}
           {currFull ? (
             <span className="badge article-archive-badge">HTML archive</span>
-          ) : currShot ? (
-            <span className="badge article-archive-badge">Chromium PNG</span>
           ) : null}
           {index > 0 ? (
             <span className="muted small"> (vs version {index})</span>
@@ -382,7 +260,7 @@ function VersionBlock({
         {archiveNote}
         {showArchiveIframe ? (
           <ArchiveIframePreview articleId={articleId} contentId={v.id} />
-        ) : prev != null && (prevFull || currFull || prevShot || currShot) ? (
+        ) : prev != null && (prevFull || currFull) ? (
           <div
             className="body body--diff"
             dangerouslySetInnerHTML={{ __html: domPurifyArticle(v.body) }}
