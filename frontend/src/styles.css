@@ -9,6 +9,7 @@
   --z-ai-assistant-dock: 126;
   --z-ai-assistant-messenger: 127;
   --z-reaction-modal: 135;
+  --z-article-diff-modal: 138;
   --z-feeds-modal: 140;
   --z-settings-dropdown: 190;
   --z-openrouter-debug: 198;
@@ -2860,6 +2861,164 @@ button.poll-error {
 
 .diff-title-line strong {
   color: var(--muted);
+}
+
+.article-body-unified {
+  margin-top: 0.65rem;
+}
+
+.article-body-latest-note {
+  margin: 0 0 0.65rem;
+  line-height: 1.45;
+}
+
+.article-archive-badge-row {
+  margin-bottom: 0.4rem;
+}
+
+.article .body--diff ins.diff-ins,
+.article .body--diff del.diff-del,
+.article .diff-title-wrap ins,
+.article .diff-title-wrap del {
+  cursor: help;
+}
+
+/* Block-level change hints (latest HTML kept; class added vs previous version) */
+.article .body .diff-block-changed {
+  background: rgba(250, 204, 21, 0.1);
+  box-shadow: inset 3px 0 0 0 rgba(234, 179, 8, 0.9);
+  padding-left: 0.6rem;
+  margin-left: -0.15rem;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.article .body .diff-block-changed:hover {
+  background: rgba(250, 204, 21, 0.16);
+}
+
+.article .body .diff-body-changed {
+  background: rgba(250, 204, 21, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(234, 179, 8, 0.45);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.article .body .diff-body-changed:hover {
+  background: rgba(250, 204, 21, 0.14);
+}
+
+.article-body--diff-clickable .body {
+  position: relative;
+}
+
+/* ─── Article version diff modal ─── */
+
+.article-diff-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-article-diff-modal);
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 1rem 2rem;
+  overflow-y: auto;
+}
+
+.article-diff-modal {
+  width: min(40rem, 100%);
+  max-height: min(78vh, 40rem);
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-bg, var(--bg));
+  padding: 1rem 1.15rem 1.15rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.article-diff-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.article-diff-modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.article-diff-modal-close {
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.article-diff-modal-close:hover {
+  color: var(--text);
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.article-diff-modal-step {
+  margin: 0 0 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.article-diff-modal-step label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.article-diff-modal-step select {
+  max-width: 100%;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.88rem;
+}
+
+.article-diff-modal-body {
+  margin-top: 0.35rem;
+  max-height: min(52vh, 22rem);
+  overflow: auto;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.article-diff-modal-open-link {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.article-diff-modal-open-link:hover {
+  color: var(--text);
 }
 
 /* ─── Articles filters drawer ─── */

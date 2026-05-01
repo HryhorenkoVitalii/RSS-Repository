@@ -1,5 +1,12 @@
 import DOMPurify from 'dompurify';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import { formatArticleDetailForAi } from '../aiScreenDigest';
 import { useAiScreenSection } from '../aiScreenContext';
 import { Link, useParams } from 'react-router-dom';
@@ -14,12 +21,13 @@ import {
 import { NotFoundPage } from './NotFoundPage';
 import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
 import { formatDateTime } from '../formatTime';
+import { markChangedBlocks } from '../articleBlockMarkers';
 import {
   htmlToPlainText,
   inlineWordDiffHtml,
   inlineWordDiffTitleHtml,
+  type DiffTooltips,
 } from '../versionDiff';
-import { versionLabel } from '../versionTitle';
 
 export function ArticlePage() {
   const { id } = useParams();
@@ -67,6 +75,9 @@ export function ArticlePage() {
   }
 
   const { article, versions } = data;
+  const latestVersion = versions.length > 0 ? versions[versions.length - 1] : null;
+  const displayTitle =
+    (latestVersion?.title ?? article.title ?? '').trim() || '(no title)';
   const telegramRx = data.telegram_reactions ?? article.telegram_reactions ?? [];
   const safeLink = (() => {
     if (!article.link) return null;
@@ -89,7 +100,7 @@ export function ArticlePage() {
         ← Back to articles
       </Link>
       <div className="card article">
-        <h1 className="card-title">{article.title || '(no title)'}</h1>
+        <h1 className="card-title">{displayTitle}</h1>
         {telegramRx.length > 0 ? (
           <div className="article-telegram-reactions">
             <TelegramReactionsStrip articleId={article.id} reactions={telegramRx} />
@@ -106,20 +117,15 @@ export function ArticlePage() {
           </span>
           <span>First seen: {formatDateTime(article.first_seen_at).display}</span>
           <span>Last fetch: {formatDateTime(article.last_fetched_at).display}</span>
-          <span>Versions stored: {versions.length}</span>
+          <span>
+            {versions.length > 1
+              ? `${versions.length} versions stored — latest shown below`
+              : `Versions stored: ${versions.length}`}
+          </span>
         </div>
 
-        <div className="body-versions">
-          {versions.map((v, i) => (
-            <VersionBlock
-              key={v.id}
-              articleId={article.id}
-              v={v}
-              index={i}
-              prev={i > 0 ? versions[i - 1] : null}
-              total={versions.length}
-            />
-          ))}
+        <div className="article-body-unified">
+          <LatestArticleBody articleId={article.id} versions={versions} />
         </div>
       </div>
     </>
@@ -177,31 +183,181 @@ function ArchiveIframePreview({
   );
 }
 
-function VersionBlock({
+function ArticleVersionDiffModal({
+  open,
+  onClose,
+  versions,
+  initialTransitionIndex,
+}: {
+  open: boolean;
+  onClose: () => void;
+  versions: ArticleContentVersion[];
+  initialTransitionIndex: number;
+}) {
+  const [transitionIdx, setTransitionIdx] = useState(initialTransitionIndex);
+
+  useEffect(() => {
+    if (open) {
+      setTransitionIdx(initialTransitionIndex);
+    }
+  }, [open, initialTransitionIndex]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open || versions.length < 2) return null;
+
+  const fromV = versions[transitionIdx];
+  const toV = versions[transitionIdx + 1];
+  if (!fromV || !toV) return null;
+
+  const fromFull = isFullPageArchiveBody(fromV.body);
+  const toFull = isFullPageArchiveBody(toV.body);
+
+  let bodyDiffHtml = '';
+  let titleDiffHtml: string | null = null;
+  if (!fromFull && !toFull) {
+    bodyDiffHtml = inlineWordDiffHtml(
+      htmlToPlainText(fromV.body),
+      htmlToPlainText(toV.body),
+    );
+    titleDiffHtml = inlineWordDiffTitleHtml(fromV.title, toV.title);
+  }
+
+  const fromTime = formatDateTime(fromV.fetched_at);
+  const toTime = formatDateTime(toV.fetched_at);
+
+  return (
+    <div className="article-diff-modal-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="article-diff-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="article-diff-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="article-diff-modal-head">
+          <h2 id="article-diff-modal-title" className="article-diff-modal-title">
+            Text changes (word diff)
+          </h2>
+          <button
+            type="button"
+            className="article-diff-modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        {versions.length > 2 ? (
+          <div className="article-diff-modal-step">
+            <label htmlFor="article-diff-step">Version step</label>
+            <select
+              id="article-diff-step"
+              value={transitionIdx}
+              onChange={(e) => setTransitionIdx(Number(e.target.value))}
+            >
+              {Array.from({ length: versions.length - 1 }, (_, i) => (
+                <option key={i} value={i}>
+                  Step {i + 1}: {formatDateTime(versions[i].fetched_at).display} →{' '}
+                  {formatDateTime(versions[i + 1].fetched_at).display}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <p className="muted small" style={{ margin: '0 0 0.65rem' }}>
+            {fromTime.display} → {toTime.display}
+          </p>
+        )}
+        {fromFull || toFull ? (
+          <p className="muted small">
+            Full-page HTML snapshots cannot be compared as plain text for this step.
+          </p>
+        ) : (
+          <>
+            {titleDiffHtml ? (
+              <p
+                className="diff-title-line diff-title-wrap small"
+                dangerouslySetInnerHTML={{ __html: titleDiffHtml }}
+              />
+            ) : null}
+            {bodyDiffHtml.trim() ? (
+              <div
+                className="body body--diff article-diff-modal-body"
+                dangerouslySetInnerHTML={{ __html: bodyDiffHtml }}
+              />
+            ) : (
+              <p className="muted small">
+                No plain-text changes in this step (only formatting may differ).
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Single-column article: latest HTML preserve formatting; optional block markers vs previous. */
+function LatestArticleBody({
   articleId,
-  v,
-  index,
-  prev,
-  total,
+  versions,
 }: {
   articleId: number;
-  v: ArticleContentVersion;
-  index: number;
-  prev: ArticleContentVersion | null;
-  total: number;
+  versions: ArticleContentVersion[];
 }) {
-  const latest = index === total - 1;
-  const fetched = formatDateTime(v.fetched_at);
-  const label = versionLabel(index, total);
-  const currFull = isFullPageArchiveBody(v.body);
+  const [diffModalOpen, setDiffModalOpen] = useState(false);
+
+  if (versions.length === 0) {
+    return <p className="muted">No saved content versions.</p>;
+  }
+
+  const latest = versions[versions.length - 1];
+  const prev = versions.length > 1 ? versions[versions.length - 2] : null;
+
+  const latestFetched = formatDateTime(latest.fetched_at);
+  const prevFetched = prev != null ? formatDateTime(prev.fetched_at) : null;
+
+  const diffTooltips: DiffTooltips | undefined =
+    prev != null && prevFetched != null
+      ? {
+          added: `Added in this update (${latestFetched.display}). Compared to the previous save (${prevFetched.display}).`,
+          removed: `Removed — was in the previous version (${prevFetched.display}). Latest update: ${latestFetched.display}.`,
+        }
+      : undefined;
+
+  const currFull = isFullPageArchiveBody(latest.body);
   const prevFull = prev != null && isFullPageArchiveBody(prev.body);
   const showArchiveIframe = currFull;
 
-  let titleBlock: ReactNode = null;
-  let bodyHtml = '';
+  const canPlainDiffModal =
+    versions.length > 1 && prev != null && !currFull && !prevFull;
 
-  if (prev != null) {
-    const titleDiff = inlineWordDiffTitleHtml(prev.title, v.title);
+  const handleMarkedBlockClick = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
+      if (!canPlainDiffModal) return;
+      const el = e.target as HTMLElement;
+      if (el.closest('a, button, input, textarea, select, label')) return;
+      if (el.closest('.diff-block-changed, .diff-body-changed')) {
+        e.preventDefault();
+        setDiffModalOpen(true);
+      }
+    },
+    [canPlainDiffModal],
+  );
+
+  const lastTransitionIndex = Math.max(0, versions.length - 2);
+
+  let titleBlock: ReactNode = null;
+  if (prev != null && diffTooltips != null) {
+    const titleDiff = inlineWordDiffTitleHtml(prev.title, latest.title, diffTooltips);
     if (titleDiff) {
       titleBlock = (
         <p
@@ -210,13 +366,15 @@ function VersionBlock({
         />
       );
     }
-    if (!prevFull && !currFull) {
-      const prevPlain = htmlToPlainText(prev.body);
-      const nextPlain = htmlToPlainText(v.body);
-      bodyHtml = inlineWordDiffHtml(prevPlain, nextPlain);
+  }
+
+  let bodyHtml = '';
+  if (!currFull) {
+    let sourceHtml = latest.body;
+    if (prev != null && !prevFull) {
+      sourceHtml = markChangedBlocks(prev.body, latest.body);
     }
-  } else if (!currFull) {
-    bodyHtml = domPurifyArticle(v.body);
+    bodyHtml = domPurifyArticle(sourceHtml);
   }
 
   const archiveNote =
@@ -231,47 +389,59 @@ function VersionBlock({
       </p>
     ) : null;
 
+  const explainNote =
+    versions.length > 1 && prev != null && !currFull && !prevFull ? (
+      <p className="article-body-latest-note muted small">
+        Latest text keeps original formatting. Yellow highlights mark blocks that changed since the
+        previous save ({prevFetched!.display}). Click a highlight or “Open text diff” for red/green
+        word comparison; multiple updates use steps below. Saved {latestFetched.display}.
+      </p>
+    ) : versions.length > 1 && prev != null && (currFull || prevFull) ? (
+      <p className="article-body-latest-note muted small">
+        Latest version ({latestFetched.display}). Full-page HTML archives are not diffed
+        side-by-side here.
+      </p>
+    ) : null;
+
   return (
-    <details
-      className={
-        latest
-          ? 'body-version-details body-version-details--latest'
-          : 'body-version-details'
-      }
-      open={latest}
-    >
-      <summary className="body-version-summary">
-        <span className="body-version-summary-main">
-          {label}
-          {currFull ? (
-            <span className="badge article-archive-badge">HTML archive</span>
-          ) : null}
-          {index > 0 ? (
-            <span className="muted small"> (vs version {index})</span>
-          ) : null}
-        </span>
-        <span className="body-version-fetched" title={fetched.title}>
-          {' '}
-          — {fetched.display}
-        </span>
-      </summary>
-      <div className="body-version-inner">
-        {titleBlock}
-        {archiveNote}
-        {showArchiveIframe ? (
-          <ArchiveIframePreview articleId={articleId} contentId={v.id} />
-        ) : prev != null && (prevFull || currFull) ? (
-          <div
-            className="body body--diff"
-            dangerouslySetInnerHTML={{ __html: domPurifyArticle(v.body) }}
-          />
-        ) : (
-          <div
-            className={prev == null ? 'body' : 'body body--diff'}
-            dangerouslySetInnerHTML={{ __html: bodyHtml }}
-          />
-        )}
-      </div>
-    </details>
+    <>
+      {explainNote}
+      {canPlainDiffModal ? (
+        <button
+          type="button"
+          className="article-diff-modal-open-link"
+          onClick={() => setDiffModalOpen(true)}
+        >
+          Open text diff (red/green, all steps)
+        </button>
+      ) : null}
+      {titleBlock}
+      {archiveNote}
+      {currFull ? (
+        <div className="article-archive-badge-row">
+          <span className="badge article-archive-badge">HTML archive</span>
+        </div>
+      ) : null}
+      {showArchiveIframe ? (
+        <ArchiveIframePreview articleId={articleId} contentId={latest.id} />
+      ) : prev != null && (prevFull || currFull) ? (
+        <div
+          className="body"
+          dangerouslySetInnerHTML={{ __html: domPurifyArticle(latest.body) }}
+        />
+      ) : (
+        <div
+          className={canPlainDiffModal ? 'body article-body--diff-clickable' : 'body'}
+          onClick={canPlainDiffModal ? handleMarkedBlockClick : undefined}
+          dangerouslySetInnerHTML={{ __html: bodyHtml }}
+        />
+      )}
+      <ArticleVersionDiffModal
+        open={diffModalOpen}
+        onClose={() => setDiffModalOpen(false)}
+        versions={versions}
+        initialTransitionIndex={lastTransitionIndex}
+      />
+    </>
   );
 }
