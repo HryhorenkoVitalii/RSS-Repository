@@ -94,6 +94,54 @@ fn canonical_channel_username(s: &str) -> String {
     s.to_ascii_lowercase()
 }
 
+/// Стабильный id поста для RSS guid и `reactions_by_guid`: `user/msg…` с user в lower case.
+fn canonical_telegram_item_id(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    if let Some((user, rest)) = s.split_once('/') {
+        if valid_channel_username(user) && !rest.is_empty() {
+            return format!("{}/{}", user.to_ascii_lowercase(), rest);
+        }
+    }
+    s.to_string()
+}
+
+/// Из ссылки t.me — тот же канон, что и у `data-post`, чтобы не плодить «два guid» на один пост.
+fn guid_from_t_me_link(link: &str) -> Option<String> {
+    let u = Url::parse(link.trim()).ok()?;
+    let h = u.host_str()?.to_ascii_lowercase();
+    if !matches!(
+        h.as_str(),
+        "t.me" | "www.t.me" | "telegram.me" | "www.telegram.me"
+    ) {
+        return None;
+    }
+    let segs: Vec<&str> = u.path_segments()?.filter(|s| !s.is_empty()).collect();
+    match segs.as_slice() {
+        ["s", user, rest @ ..] if !rest.is_empty() && valid_channel_username(user) => Some(format!(
+            "{}/{}",
+            user.to_ascii_lowercase(),
+            rest.join("/")
+        )),
+        [user, rest @ ..] if !rest.is_empty() && valid_channel_username(user) => Some(format!(
+            "{}/{}",
+            user.to_ascii_lowercase(),
+            rest.join("/")
+        )),
+        _ => None,
+    }
+}
+
+fn telegram_rss_item_guid(data_post: &str, link: &str) -> String {
+    let dp = data_post.trim();
+    if !dp.is_empty() {
+        return canonical_telegram_item_id(dp);
+    }
+    guid_from_t_me_link(link).unwrap_or_else(|| link.to_string())
+}
+
 fn reserved_path_segment(seg: &str) -> bool {
     matches!(
         seg,
@@ -414,11 +462,7 @@ fn parse_page(html: &str, base_url: &str) -> Result<(Vec<ParsedPost>, Option<Str
 
         let reactions = parse_reactions(msg);
 
-        let post_id = if data_post.is_empty() {
-            link.clone()
-        } else {
-            data_post.clone()
-        };
+        let post_id = telegram_rss_item_guid(&data_post, &link);
 
         if let Some(numeric_id) = data_post.rsplit('/').next() {
             if numeric_id.chars().all(|c| c.is_ascii_digit()) {
@@ -556,6 +600,18 @@ pub fn normalize_new_feed_url(raw: &str) -> Result<String, FeedFetchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telegram_item_guid_normalizes_user_case() {
+        assert_eq!(
+            telegram_rss_item_guid("MyChannel/99", "https://t.me/s/MyChannel/99"),
+            "mychannel/99"
+        );
+        assert_eq!(
+            guid_from_t_me_link("https://t.me/s/DuRoV/12345").as_deref(),
+            Some("durov/12345")
+        );
+    }
 
     #[test]
     fn try_url_handles_at_and_tme() {

@@ -84,6 +84,11 @@ async fn sync_article_telegram_reactions_tx(
     new_rx: &[(String, String)],
     now: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
+    // Парсер может выдать одну и ту же реакцию дважды → PK (article_id, emoji).
+    let mut new_map: HashMap<String, String> = HashMap::new();
+    for (emoji, count) in new_rx.iter().cloned() {
+        new_map.insert(emoji, count);
+    }
     let old: Vec<(String, String)> = sqlx::query_as(
         r#"SELECT emoji, count_display FROM article_reactions WHERE article_id = ?"#,
     )
@@ -91,7 +96,6 @@ async fn sync_article_telegram_reactions_tx(
     .fetch_all(&mut **tx)
     .await?;
     let old_map: HashMap<String, String> = old.into_iter().collect();
-    let new_map: HashMap<String, String> = new_rx.iter().cloned().collect();
     if old_map == new_map {
         return Ok(());
     }
@@ -127,7 +131,7 @@ async fn sync_article_telegram_reactions_tx(
         .bind(article_id)
         .execute(&mut **tx)
         .await?;
-    for (emoji, count) in new_rx {
+    for (emoji, count) in &new_map {
         sqlx::query(
             r#"INSERT INTO article_reactions (article_id, emoji, count_display, updated_at)
                VALUES (?, ?, ?, ?)"#,
