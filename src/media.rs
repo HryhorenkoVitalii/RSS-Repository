@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use once_cell::sync::OnceCell;
-use regex::Regex;
+use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use tokio::sync::Semaphore;
@@ -10,15 +10,22 @@ use crate::browser_http::{headers_for, FetchProfile};
 use crate::error::AppError;
 use crate::http_retry;
 
-static MEDIA_RE: OnceCell<Regex> = OnceCell::new();
+static MEDIA_SEL: OnceCell<Selector> = OnceCell::new();
 
-fn media_re() -> &'static Regex {
-    MEDIA_RE.get_or_init(|| {
-        Regex::new(
-            r#"(?i)<(?:img|video|audio|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']"#,
-        )
-        .expect("media regex must compile")
+fn media_sel() -> &'static Selector {
+    MEDIA_SEL.get_or_init(|| {
+        Selector::parse("img, video, audio, source")
+            .expect("media element selector must compile")
     })
+}
+
+/// Fingerprint a remote URL when the file was not downloaded (so the next poll can still
+/// detect a change: new URL, or different bytes after a successful download).
+pub fn remote_url_fingerprint(url: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(b"remote:");
+    h.update(url.as_bytes());
+    hex::encode(h.finalize())
 }
 
 pub fn media_dir() -> PathBuf {
@@ -172,19 +179,45 @@ pub async fn get_media_by_hash(pool: &SqlitePool, sha256: &str) -> Result<Option
     Ok(row)
 }
 
-/// Extract media URLs from HTML body.
+fn push_if_http(s: &str, out: &mut Vec<String>) {
+    let s = s.trim();
+    if s.starts_with("http://") || s.starts_with("https://") {
+        out.push(s.to_string());
+    }
+}
+
+/// Parse a `srcset` attribute: `url 480w, url2 1x` — keep absolute http(s) URLs only.
+fn push_srcset_http_urls(value: &str, out: &mut Vec<String>) {
+    for part in value.split(',') {
+        let part = part.trim();
+        let url = part.split_whitespace().next().unwrap_or("").trim();
+        push_if_http(url, out);
+    }
+}
+
+/// Extract media URLs from HTML: `src`, `data-src`, `poster`, and `srcset` entries.
 pub fn extract_media_urls(html: &str) -> Vec<String> {
-    media_re()
-        .captures_iter(html)
-        .filter_map(|cap| {
-            let url = cap.get(1)?.as_str().trim();
-            if url.starts_with("http://") || url.starts_with("https://") {
-                Some(url.to_string())
-            } else {
-                None
+    let mut out = Vec::new();
+    let fragment = Html::parse_fragment(html);
+    for el in fragment.select(media_sel()) {
+        if let Some(src) = el.value().attr("src") {
+            push_if_http(src, &mut out);
+        }
+        if let Some(ds) = el.value().attr("data-src") {
+            push_if_http(ds, &mut out);
+        }
+        if el.value().name() == "video" {
+            if let Some(p) = el.value().attr("poster") {
+                push_if_http(p, &mut out);
             }
-        })
-        .collect()
+        }
+        if let Some(ss) = el.value().attr("srcset") {
+            push_srcset_http_urls(ss, &mut out);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Replace media URLs in HTML with local proxy URLs.
@@ -197,8 +230,9 @@ pub fn rewrite_media_urls(html: &str, replacements: &[(String, String)]) -> Stri
 }
 
 /// Compute a combined hash of text content + media hashes (sorted for stability).
-pub fn combined_content_hash(text_canonical: &str, media_hashes: &mut [String]) -> Vec<u8> {
+pub fn combined_content_hash(text_canonical: &str, media_hashes: &mut Vec<String>) -> Vec<u8> {
     media_hashes.sort();
+    media_hashes.dedup();
     let mut h = Sha256::new();
     h.update(text_canonical.as_bytes());
     for mh in media_hashes.iter() {
@@ -228,4 +262,38 @@ pub fn find_media_file(dir: &Path, sha256: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_collects_src_data_src_poster_srcset() {
+        let html = r#"<div>
+          <img src="https://cdn.example/a.png"/>
+          <img data-src="https://cdn.example/lazy.webp"/>
+          <video poster="https://cdn.example/thumb.jpg" src="https://cdn.example/v.mp4"></video>
+          <img srcset="https://cdn.example/small.jpg 480w, https://cdn.example/big.jpg 800w"/>
+        </div>"#;
+        let mut u = extract_media_urls(html);
+        u.sort();
+        assert!(u.contains(&"https://cdn.example/a.png".to_string()));
+        assert!(u.contains(&"https://cdn.example/lazy.webp".to_string()));
+        assert!(u.contains(&"https://cdn.example/thumb.jpg".to_string()));
+        assert!(u.contains(&"https://cdn.example/v.mp4".to_string()));
+        assert!(u.contains(&"https://cdn.example/small.jpg".to_string()));
+        assert!(u.contains(&"https://cdn.example/big.jpg".to_string()));
+    }
+
+    #[test]
+    fn combined_hash_changes_when_remote_fingerprint_differs() {
+        let canon = "hello";
+        let mut a = vec!["aaa".into(), remote_url_fingerprint("https://x/1")];
+        let mut b = vec!["aaa".into(), remote_url_fingerprint("https://x/2")];
+        assert_ne!(
+            combined_content_hash(canon, &mut a),
+            combined_content_hash(canon, &mut b)
+        );
+    }
 }

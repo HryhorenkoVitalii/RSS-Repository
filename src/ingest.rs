@@ -91,10 +91,12 @@ pub async fn poll_feed(
                 }
                 Err(e) => {
                     tracing::warn!(url = %url, error = %e, "media download failed, keeping original URL");
+                    media_hashes.push(media::remote_url_fingerprint(url));
                 }
             }
         }
 
+        replacements.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
         let body = media::rewrite_media_urls(&body, &replacements);
         let hash = media::combined_content_hash(&canon, &mut media_hashes);
 

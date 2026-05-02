@@ -95,6 +95,46 @@ fn atom_entry_link(entry: &atom_syndication::Entry) -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
+/// Прямые потоки YouTube (`googlevideo.com` и т.п.) не воспроизводятся через обычный `<video>`
+/// в браузере (адаптивное качество, подписи URL, ограничения по Referrer).
+/// Превью и ссылка «Открыть источник» уже добавлены выше.
+fn mrss_video_src_unusable_in_native_video_tag(url: &str) -> bool {
+    let u = url.to_ascii_lowercase();
+    u.contains("googlevideo.com")
+}
+
+/// MRSS `media:content` — прямой URL видео/аудио (часто рядом с `media:thumbnail`).
+fn atom_mrss_media_content_urls(entry: &atom_syndication::Entry) -> Vec<String> {
+    let mut out = Vec::new();
+    let push_from_contents =
+        |contents: &[atom_syndication::extension::Extension], out: &mut Vec<String>| {
+            for c in contents {
+                if let Some(u) = c.attrs.get("url") {
+                    let u = u.trim();
+                    if u.starts_with("http://") || u.starts_with("https://") {
+                        out.push(u.to_string());
+                    }
+                }
+            }
+        };
+
+    for ns_map in entry.extensions.values() {
+        if let Some(groups) = ns_map.get("group") {
+            for group in groups {
+                if let Some(contents) = group.children.get("content") {
+                    push_from_contents(contents, &mut out);
+                }
+            }
+        }
+        if let Some(contents) = ns_map.get("content") {
+            push_from_contents(contents, &mut out);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// MRSS (`media:group` / `media:thumbnail`) — так YouTube и часть других Atom-фидов отдают превью без `<img>` в теле.
 fn atom_media_thumbnail_url(entry: &atom_syndication::Entry) -> Option<String> {
     for ns_map in entry.extensions.values() {
@@ -162,6 +202,25 @@ fn atom_entry_html(entry: &atom_syndication::Entry) -> String {
             };
         }
     }
+
+    for u in atom_mrss_media_content_urls(entry) {
+        if html.contains(u.as_str()) {
+            continue;
+        }
+        if mrss_video_src_unusable_in_native_video_tag(&u) {
+            continue;
+        }
+        let src = html_escape::encode_double_quoted_attribute(&u);
+        let vid = format!(
+            r#"<p><video controls preload="metadata" playsinline src="{src}" style="max-width:100%;height:auto"></video></p>"#
+        );
+        html = if html.is_empty() {
+            vid
+        } else {
+            format!("{html}{vid}")
+        };
+    }
+
     html
 }
 
@@ -274,5 +333,55 @@ mod tests {
             html.contains("watch?v=abc") && html.contains("Открыть источник"),
             "alternate link preserved with thumbnail: {html}"
         );
+    }
+
+    #[test]
+    fn atom_youtube_googlevideo_mrss_skips_native_video_tag() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <id>feed</id>
+  <title>T</title>
+  <updated>2020-01-01T00:00:00Z</updated>
+  <entry>
+    <id>e-yt</id>
+    <title>YT</title>
+    <updated>2020-01-01T00:00:00Z</updated>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=abc"/>
+    <media:group>
+      <media:thumbnail url="https://i.ytimg.com/vi/abc/hqdefault.jpg"/>
+      <media:content url="https://r1.test.googlevideo.com/videoplayback?id=1" type="video/mp4"/>
+    </media:group>
+  </entry>
+</feed>"#;
+        let ch = channel_from_atom(xml).expect("parse atom");
+        let html = ch.items()[0].content().expect("content set");
+        assert!(
+            !html.contains("<video"),
+            "googlevideo MRSS must not inject broken <video>: {html}"
+        );
+        assert!(html.contains("hqdefault.jpg"), "{html}");
+        assert!(html.contains("Открыть источник"), "{html}");
+    }
+
+    #[test]
+    fn atom_mrss_media_content_becomes_video_tag() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <id>feed</id>
+  <title>T</title>
+  <updated>2020-01-01T00:00:00Z</updated>
+  <entry>
+    <id>e2</id>
+    <title>V</title>
+    <updated>2020-01-01T00:00:00Z</updated>
+    <media:group>
+      <media:content url="https://cdn.example/video.mp4" type="video/mp4"/>
+    </media:group>
+  </entry>
+</feed>"#;
+        let ch = channel_from_atom(xml).expect("parse atom");
+        let html = ch.items()[0].content().expect("content set");
+        assert!(html.contains("video.mp4"), "{html}");
+        assert!(html.contains("<video"), "{html}");
     }
 }
