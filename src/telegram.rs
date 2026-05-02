@@ -89,6 +89,11 @@ fn valid_channel_username(s: &str) -> bool {
         .all(|&c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
+/// Telegram-юзернеймы нечувствительны к регистру; БД (uk_feeds_url) — тоже (unicode_ci) → дубликат «по PK».
+fn canonical_channel_username(s: &str) -> String {
+    s.to_ascii_lowercase()
+}
+
 fn reserved_path_segment(seg: &str) -> bool {
     matches!(
         seg,
@@ -114,7 +119,10 @@ pub fn try_telegram_preview_url(raw: &str) -> Option<String> {
     }
     if let Some(u) = t.strip_prefix('@').map(str::trim) {
         if valid_channel_username(u) {
-            return Some(format!("https://t.me/s/{u}"));
+            return Some(format!(
+                "https://t.me/s/{}",
+                canonical_channel_username(u)
+            ));
         }
         return None;
     }
@@ -144,7 +152,10 @@ pub fn try_telegram_preview_url(raw: &str) -> Option<String> {
         if !valid_channel_username(user) {
             return None;
         }
-        return Some(format!("https://t.me/s/{user}"));
+        return Some(format!(
+            "https://t.me/s/{}",
+            canonical_channel_username(user)
+        ));
     }
 
     if segments.len() == 1 {
@@ -153,7 +164,10 @@ pub fn try_telegram_preview_url(raw: &str) -> Option<String> {
             return None;
         }
         if valid_channel_username(seg) {
-            return Some(format!("https://t.me/s/{seg}"));
+            return Some(format!(
+                "https://t.me/s/{}",
+                canonical_channel_username(seg)
+            ));
         }
     }
 
@@ -545,6 +559,10 @@ mod tests {
 
     #[test]
     fn try_url_handles_at_and_tme() {
+        assert_eq!(
+            try_telegram_preview_url("https://t.me/s/DuRoV").as_deref(),
+            Some("https://t.me/s/durov")
+        );
         assert_eq!(
             try_telegram_preview_url("@durov").as_deref(),
             Some("https://t.me/s/durov")

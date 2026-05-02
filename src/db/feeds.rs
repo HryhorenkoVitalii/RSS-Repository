@@ -82,6 +82,17 @@ pub async fn find_feeds_by_title_ci(pool: &MySqlPool, title: &str) -> Result<Vec
     Ok(rows)
 }
 
+/// Коллизии с `uk_feeds_url` при разном регистре (unicode_ci) и повторном добавлении того же фида.
+pub async fn get_feed_id_by_url_ci(pool: &MySqlPool, url: &str) -> Result<Option<i64>, AppError> {
+    let row = sqlx::query_scalar::<_, i64>(
+        r#"SELECT id FROM feeds WHERE LOWER(url) = LOWER(?) LIMIT 1"#,
+    )
+    .bind(url)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 pub async fn get_feed(pool: &MySqlPool, id: i64) -> Result<Option<Feed>, AppError> {
     let row = sqlx::query_as::<_, Feed>(
         r#"SELECT id, url, title, poll_interval_seconds, telegram_max_items, created_at, last_polled_at

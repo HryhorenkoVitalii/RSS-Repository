@@ -99,6 +99,9 @@ pub(super) async fn create_feed(
     } else {
         500
     };
+    if let Some(id) = db::get_feed_id_by_url_ci(&state.pool, &url).await? {
+        return Ok((StatusCode::OK, Json(CreateFeedResponse { id })));
+    }
     let id = db::create_feed(
         state.db_write.as_ref(),
         &state.pool,

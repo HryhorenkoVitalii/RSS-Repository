@@ -58,7 +58,7 @@
     },
     "/api/feeds": {
       "get": { "summary": "List feeds (paginated)", "parameters": [{ "name": "page", "in": "query", "schema": { "type": "integer" } }] },
-      "post": { "summary": "Create feed", "responses": { "201": { "description": "Created" } } }
+      "post": { "summary": "Create feed", "description": "200 = feed with same URL already exists (case-insensitive); 201 = new feed.", "responses": { "200": { "description": "Exists" }, "201": { "description": "Created" } } }
     },
     "/api/feeds/{id}": {
       "delete": { "summary": "Delete feed", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }

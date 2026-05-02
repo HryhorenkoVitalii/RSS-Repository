@@ -2228,6 +2228,8 @@ button.poll-error {
   border-radius: var(--radius-sm);
   border-bottom: 1px solid var(--border);
   transition: background var(--transition);
+  content-visibility: auto;
+  contain-intrinsic-size: 120px;
 }
 
 .article-list li:last-child {
@@ -2278,6 +2280,7 @@ button.poll-error {
   background: transparent;
   color: var(--muted);
   box-shadow: none;
+  touch-action: manipulation;
 }
 
 .article-view-toggle button:hover:not(.is-active) {
@@ -3490,6 +3493,27 @@ button.poll-error {
   }
 }
 
+/* Blur сильно нагружает GPU на планшетах; на грубом указателе — плотный фон без backdrop-filter. */
+@media (pointer: coarse) {
+  .articles-filters-rail {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: linear-gradient(180deg, #161e2a 0%, #0e121a 100%);
+  }
+
+  .articles-filters-drawer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: #0e1218;
+  }
+
+  .article-tile {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(10, 14, 22, 0.94);
+  }
+}
+
 .articles-filters-drawer-scroll {
   width: 100%;
   max-height: calc(100dvh - var(--header-h) - env(safe-area-inset-top, 0px) - 1.25rem);
@@ -3670,6 +3694,26 @@ button.poll-error {
 
 .filters-panel-actions {
   margin-top: 0.15rem;
+}
+
+.filters-panel-actions--split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.filters-panel-actions--split .filters-panel-apply {
+  flex: 1 1 10rem;
+  min-width: 0;
+  width: auto;
+}
+
+.filters-panel-clear {
+  flex: 0 0 auto;
+  padding: 0.55rem 0.85rem;
+  font-weight: 600;
+  box-sizing: border-box;
 }
 
 .filters-panel-apply {

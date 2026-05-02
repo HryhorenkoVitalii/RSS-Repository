@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   buildNewsAnalysisPrompt,
@@ -20,6 +28,12 @@ import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
 import { feedRssPath } from '../feedRss';
 import { formatDateTime } from '../formatTime';
 import { PaginationBar } from '../PaginationBar';
+import {
+  clearArticleListPrefs,
+  loadArticleListPrefs,
+  saveArticleListPrefs,
+  type ArticleViewModePref,
+} from '../articleListPrefs';
 import { pickTagChipTextColor } from '../tagChipText';
 
 function parseCommaSepIds(raw: string | null): string[] {
@@ -27,7 +41,7 @@ function parseCommaSepIds(raw: string | null): string[] {
   return raw.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-type ArticleViewMode = 'list' | 'tiles';
+type ArticleViewMode = ArticleViewModePref;
 
 function parseViewMode(raw: string | null): ArticleViewMode {
   return raw === 'tiles' ? 'tiles' : 'list';
@@ -224,8 +238,76 @@ function firstImageUrlFromArticle(html: string): string | null {
   return null;
 }
 
+function hasFilterParamsInSearch(sp: URLSearchParams): boolean {
+  return Boolean(
+    sp.get('feed_id') ||
+      sp.get('tag_id') ||
+      sp.get('modified_only') === 'true' ||
+      sp.get('date_from') ||
+      sp.get('date_to'),
+  );
+}
+
 export function ArticlesPage() {
   const [search, setSearch] = useSearchParams();
+  const [prefsReady, setPrefsReady] = useState(false);
+
+  useLayoutEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const hasFilters = hasFilterParamsInSearch(sp);
+    const hasView = sp.has('view');
+    const saved = loadArticleListPrefs();
+
+    if (!saved) {
+      setPrefsReady(true);
+      return;
+    }
+
+    let needMerge = false;
+    if (!hasFilters) {
+      needMerge =
+        saved.feedIds.length > 0 ||
+        saved.tagIds.length > 0 ||
+        saved.modifiedOnly ||
+        Boolean(saved.dateFrom) ||
+        Boolean(saved.dateTo);
+    }
+    if (!hasView && saved.view === 'tiles') {
+      needMerge = true;
+    }
+
+    if (!needMerge) {
+      setPrefsReady(true);
+      return;
+    }
+
+    setSearch(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (!hasFilters) {
+          if (saved.feedIds.length > 0) p.set('feed_id', saved.feedIds.join(','));
+          else p.delete('feed_id');
+          if (saved.tagIds.length > 0) p.set('tag_id', saved.tagIds.join(','));
+          else p.delete('tag_id');
+          if (saved.modifiedOnly) p.set('modified_only', 'true');
+          else p.delete('modified_only');
+          if (saved.dateFrom) p.set('date_from', saved.dateFrom);
+          else p.delete('date_from');
+          if (saved.dateTo) p.set('date_to', saved.dateTo);
+          else p.delete('date_to');
+        }
+        if (!hasView) {
+          if (saved.view === 'tiles') p.set('view', 'tiles');
+          else p.delete('view');
+        }
+        p.delete('page');
+        return p;
+      },
+      { replace: true },
+    );
+    setPrefsReady(true);
+  }, [setSearch]);
+
   const feedIds = parseCommaSepIds(search.get('feed_id'));
   const tagIds = parseCommaSepIds(search.get('tag_id'));
   const modifiedOnly = search.get('modified_only') === 'true';
@@ -280,8 +362,23 @@ export function ArticlesPage() {
   }, [feedIds.join(','), tagIds.join(','), modifiedOnly, page, dateFrom, dateTo]);
 
   useEffect(() => {
+    if (!prefsReady) return;
     void load();
-  }, [load]);
+  }, [load, prefsReady]);
+
+  useEffect(() => {
+    if (!prefsReady) return;
+    saveArticleListPrefs({
+      feedIds,
+      tagIds,
+      modifiedOnly,
+      dateFrom,
+      dateTo,
+      view: viewMode,
+    });
+    // feedIds/tagIds are new [] each render; join keeps the effect stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefsReady, feedIds.join(','), tagIds.join(','), modifiedOnly, dateFrom, dateTo, viewMode]);
 
   function setParam(key: string, value: string | null) {
     setSearch(
@@ -348,6 +445,14 @@ export function ArticlesPage() {
       },
       { replace: true },
     );
+  }
+
+  function onClearAllFilters() {
+    clearArticleListPrefs();
+    setPendingFeedIds([]);
+    setPendingTagIds([]);
+    setFiltersOpen(false);
+    setSearch(new URLSearchParams(), { replace: true });
   }
 
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
@@ -569,7 +674,12 @@ export function ArticlesPage() {
                     ×
                   </button>
                 </div>
-                <form className="filters filters-panel-form" onSubmit={onApplyFilters} ref={formRef}>
+                <form
+                  className="filters filters-panel-form"
+                  onSubmit={onApplyFilters}
+                  ref={formRef}
+                  key={`${feedIds.join(',')}-${tagIds.join(',')}-${modifiedOnly}-${dateFrom}-${dateTo}`}
+                >
                   <section className="filters-panel-section" aria-labelledby="filters-feeds-heading">
                     <div className="filters-panel-head">
                       <div>
@@ -723,9 +833,17 @@ export function ArticlesPage() {
                     </label>
                   </section>
 
-                  <div className="filters-panel-actions">
+                  <div className="filters-panel-actions filters-panel-actions--split">
                     <button type="submit" className="btn-primary filters-panel-apply">
                       Apply filters
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary filters-panel-clear"
+                      onClick={onClearAllFilters}
+                      title="Сбросить все фильтры и сохранённое состояние списка"
+                    >
+                      Сбросить
                     </button>
                   </div>
 

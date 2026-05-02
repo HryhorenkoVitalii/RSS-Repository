@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { AiScreenContextProvider } from './aiScreenContext';
 import { getAiAssistantFabVisible, setAiAssistantFabVisible } from './aiAssistantPrefs';
@@ -15,8 +15,9 @@ import { Toasts } from './Toasts';
  */
 const pageEase = [0.4, 0, 0.2, 1] as const;
 
-function routeVariants(reduceMotion: boolean) {
+function routeVariants(reduceMotion: boolean, touchUi: boolean) {
   const instant = { duration: 0.001 };
+  const fadeInMs = reduceMotion ? 0.16 : touchUi ? 0.12 : 0.28;
 
   if (reduceMotion) {
     return {
@@ -28,7 +29,7 @@ function routeVariants(reduceMotion: boolean) {
 
   return {
     initial: { opacity: 0 },
-    animate: { opacity: 1, transition: { duration: 0.28, ease: pageEase } },
+    animate: { opacity: 1, transition: { duration: fadeInMs, ease: pageEase } },
     exit: { opacity: 1, transition: instant },
   };
 }
@@ -38,6 +39,18 @@ export function Layout() {
   const [aiAssistantFabVisible, setAiAssistantFabVisibleState] = useState(getAiAssistantFabVisible);
   const location = useLocation();
   const reduceMotion = useReducedMotion() === true;
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)');
+    setCoarsePointer(mq.matches);
+    const onChange = () => setCoarsePointer(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const pageMotion = useMemo(
+    () => routeVariants(reduceMotion, coarsePointer),
+    [reduceMotion, coarsePointer],
+  );
   const year = new Date().getFullYear();
   const articlesNavActive =
     location.pathname === '/' || location.pathname.startsWith('/articles');
@@ -115,7 +128,7 @@ export function Layout() {
               <motion.div
                 key={location.pathname}
                 className="page-transition-surface"
-                variants={routeVariants(reduceMotion)}
+                variants={pageMotion}
                 initial="initial"
                 animate="animate"
                 exit="exit"
