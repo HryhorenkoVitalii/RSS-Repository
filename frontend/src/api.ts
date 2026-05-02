@@ -6,7 +6,7 @@ export const ARTICLE_NOT_FOUND_MESSAGE = 'Статья не найдена.';
 /** Backend serves OpenAPI at GET /api/openapi.json (see `src/openapi.json`). */
 export const OPENAPI_SPEC_PATH = '/openapi.json';
 
-/** Must match `FULL_PAGE_HTML_MARKER` in `src/article_expand.rs`. */
+/** Must match `FULL_PAGE_HTML_MARKER` in `src/routes/api/articles/detail.rs`. */
 export const ARTICLE_FULL_PAGE_MARKER = '<!--rss-repository:full-page-html-->\n';
 
 export function isFullPageArchiveBody(body: string): boolean {

@@ -163,16 +163,12 @@ pub async fn save_media_record(
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-#[allow(dead_code)]
 pub struct MediaRow {
-    pub sha256: String,
     pub mime_type: String,
 }
 
 pub async fn get_media_by_hash(pool: &MySqlPool, sha256: &str) -> Result<Option<MediaRow>, AppError> {
-    let row = sqlx::query_as::<_, MediaRow>(
-        "SELECT sha256, mime_type FROM media WHERE sha256 = ?",
-    )
+    let row = sqlx::query_as::<_, MediaRow>("SELECT mime_type FROM media WHERE sha256 = ?")
     .bind(sha256)
     .fetch_optional(pool)
     .await?;

@@ -3,13 +3,15 @@ use axum::response::Html;
 use axum::Json;
 use serde::Serialize;
 
-use crate::article_expand;
 use crate::db::{
     self, Article, ArticleContentVersion, ArticleReactionHistoryEntry, ArticleReactionSnapshot,
 };
 use crate::error::AppError;
 
 use crate::routes::AppState;
+
+/// Prepended to `article_contents.body` for full-page HTML via `raw-html` (см. `ARTICLE_FULL_PAGE_MARKER` в `frontend/src/api.ts`).
+const FULL_PAGE_HTML_MARKER: &str = "<!--rss-repository:full-page-html-->\n";
 
 #[derive(Serialize)]
 pub(crate) struct ArticleFeedPreview {
@@ -66,7 +68,7 @@ pub(crate) async fn get_article_content_raw_html(
     let Some(body) = row else {
         return Err(AppError::NotFound);
     };
-    let marker = article_expand::FULL_PAGE_HTML_MARKER;
+    let marker = FULL_PAGE_HTML_MARKER;
     if !body.starts_with(marker) {
         return Err(AppError::BadRequest(
             "эта версия не полноэкранный HTML-архив".into(),

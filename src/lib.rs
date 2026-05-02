@@ -3,7 +3,6 @@
 mod env_util;
 mod http_retry;
 mod browser_http;
-mod article_expand;
 pub mod db;
 mod error;
 mod ingest;
