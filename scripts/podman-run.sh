@@ -1,76 +1,51 @@
 #!/usr/bin/env bash
-# Сборка образа и запуск: интерфейс и API на http://127.0.0.1:${PORT:-8080}
+# Сборка и запуск через Compose: приложение + MariaDB в одном проекте и общей сети стека.
+# Снаружи доступен только порт приложения (по умолчанию 8080); БД слушает только внутри сети compose.
 #
-# В образе нет Vite — порта 5173 нет (он только у `npm run dev` локально).
-# Открывайте сайт на 8080, не на 5173.
+# Требуется: Docker Compose v2 (`docker compose`) или Podman Compose (`podman compose`).
 #
-# База SQLite: на хосте создаётся HOST_DATA_DIR/RSS_DB_FILE, монтируется в контейнер как
-# /data/<RSS_DB_FILE>, DATABASE_URL=sqlite:/data/<RSS_DB_FILE> — один и тот же файл.
+# Примеры:
+#   ./scripts/podman-run.sh              # поднять в фоне с пересборкой при необходимости
+#   COMPOSE_UP_FLAGS="--build" ./scripts/podman-run.sh
+#   PORT=9000 ./scripts/podman-run.sh
 #
-# Фон: DETACHED=1 ./scripts/podman-run.sh
-# SELinux (Podman): VOLUME_SUFFIX=:U ./scripts/podman-run.sh
+# Логи:   compose logs -f app
+# Стоп:   compose down   (в каталоге репозитория)
+#
+# SELinux (Podman): задайте в .env строку вида HOST_DATA_DIR=/var/lib/rss:Z (суффикс :Z — см. документацию Podman).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-IMAGE="${IMAGE:-rss-repository}"
-CMD="${PODMAN:-podman}"
 
-if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
-  "$CMD" build -t "$IMAGE" -f Containerfile .
-fi
+export HOST_DATA_DIR="${HOST_DATA_DIR:-$ROOT/data}"
+mkdir -p "$HOST_DATA_DIR/media" || true
 
-# Том: каталог на хосте → /data в контейнере (тот же inode, что и файл БД на хосте).
-HOST_DATA_DIR="${HOST_DATA_DIR:-$ROOT/data}"
-RSS_DB_FILE="${RSS_DB_FILE:-rss_repository.db}"
-mkdir -p "$HOST_DATA_DIR"
-HOST_DB_PATH="${HOST_DATA_DIR}/${RSS_DB_FILE}"
+COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/compose.yaml}"
 
-if [[ ! -e "$HOST_DB_PATH" ]]; then
-  touch "$HOST_DB_PATH"
-fi
-
-# В контейнере процесс под www-data (Debian: UID/GID 33). Файл и каталог должны быть доступны на запись.
-CONTAINER_UID="${CONTAINER_UID:-33}"
-CONTAINER_GID="${CONTAINER_GID:-33}"
-set_data_owner() {
-  if chown "${CONTAINER_UID}:${CONTAINER_GID}" "$HOST_DATA_DIR" "$HOST_DB_PATH" 2>/dev/null; then
-    return 0
+pick_compose() {
+  if [[ -n "${COMPOSE_CMD:-}" ]]; then
+    echo "$COMPOSE_CMD"
+    return
   fi
-  if [[ "$(id -u)" -eq 0 ]]; then
-    chown "${CONTAINER_UID}:${CONTAINER_GID}" "$HOST_DATA_DIR" "$HOST_DB_PATH" && return 0
+  if command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
+    echo "podman compose"
+    return
   fi
-  if command -v sudo >/dev/null 2>&1; then
-    sudo chown "${CONTAINER_UID}:${CONTAINER_GID}" "$HOST_DATA_DIR" "$HOST_DB_PATH" 2>/dev/null && return 0
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return
   fi
-  return 1
-}
-if ! set_data_owner; then
-  echo "Предупреждение: не удалось chown ${CONTAINER_UID}:${CONTAINER_GID} на ${HOST_DATA_DIR}. При SQLite 14/8 выполни: sudo chown -R ${CONTAINER_UID}:${CONTAINER_GID} ${HOST_DATA_DIR}" >&2
-fi
-
-DATABASE_URL_CONTAINER="sqlite:/data/${RSS_DB_FILE}"
-
-"$CMD" rm -f rss-repository 2>/dev/null || true
-
-PORT_HOST="${PORT:-8080}"
-PUBLIC="${PUBLIC_BASE_URL:-http://127.0.0.1:${PORT_HOST}}"
-VOLUME_SUFFIX="${VOLUME_SUFFIX:-}"
-
-run_container() {
-  "$CMD" run "$@" --rm \
-    --name rss-repository \
-    -p "${PORT_HOST}:8080" \
-    -e "PUBLIC_BASE_URL=$PUBLIC" \
-    -e "DATABASE_URL=${DATABASE_URL_CONTAINER}" \
-    -v "${HOST_DATA_DIR}:/data${VOLUME_SUFFIX}" \
-    "$IMAGE"
+  echo "Не найден «podman compose» или «docker compose». Установите Compose v2 или задайте COMPOSE_CMD." >&2
+  exit 1
 }
 
-if [[ "${DETACHED:-0}" == "1" ]]; then
-  run_container -d
-  echo "Запущено в фоне. Откройте http://127.0.0.1:${PORT_HOST}/"
-  echo "БД на хосте: ${HOST_DB_PATH} → в контейнере /data/${RSS_DB_FILE}"
-  echo "(Порт 5173 — только для локального npm run dev; в контейнере используйте ${PORT_HOST}.)"
-else
-  run_container
-fi
+C="$(pick_compose)"
+DEFAULT_UP_FLAGS="-d --build"
+FLAGS="${COMPOSE_UP_FLAGS:-$DEFAULT_UP_FLAGS}"
+
+# shellcheck disable=SC2086
+$C -f "$COMPOSE_FILE" up $FLAGS
+
+echo "Откройте ${PUBLIC_BASE_URL:-http://127.0.0.1:${PORT:-8080}/}"
+echo "MariaDB доступна только контейнеру app по имени сервиса «db» (порт 3306 не проброшен на хост)."
+echo "Остановка: cd \"$ROOT\" && $C -f \"$COMPOSE_FILE\" down"

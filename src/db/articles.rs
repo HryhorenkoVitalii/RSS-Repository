@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, MySql, MySqlPool};
 use tokio::sync::Semaphore;
 
 use crate::error::AppError;
@@ -45,7 +45,7 @@ pub struct ArticleContentVersion {
 }
 
 const ARTICLE_SELECT: &str = r#"
-SELECT a.id, a.feed_id, a.guid,
+SELECT CAST(a.id AS SIGNED) AS id, CAST(a.feed_id AS SIGNED) AS feed_id, a.guid,
   cur.title AS title, cur.body AS body,
   a.published_at, a.first_seen_at, a.last_fetched_at,
   COALESCE(
@@ -54,7 +54,7 @@ SELECT a.id, a.feed_id, a.guid,
      ORDER BY c.id DESC LIMIT 1),
     a.last_fetched_at
   ) AS latest_content_fetched_at,
-  (SELECT COUNT(*) FROM article_contents x WHERE x.article_id = a.id) AS content_version_count,
+  CAST((SELECT COUNT(*) FROM article_contents x WHERE x.article_id = a.id) AS SIGNED) AS content_version_count,
   (SELECT body FROM article_contents x
    WHERE x.article_id = a.id
    ORDER BY x.id DESC LIMIT 1 OFFSET 1) AS previous_body,
@@ -79,7 +79,7 @@ pub struct UpsertArticle<'a> {
 }
 
 async fn sync_article_telegram_reactions_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
     article_id: i64,
     new_rx: &[(String, String)],
     now: DateTime<Utc>,
@@ -95,7 +95,6 @@ async fn sync_article_telegram_reactions_tx(
     if old_map == new_map {
         return Ok(());
     }
-    let t = now.to_rfc3339();
     for (emoji, new_c) in &new_map {
         if old_map.get(emoji) != Some(new_c) {
             sqlx::query(
@@ -105,7 +104,7 @@ async fn sync_article_telegram_reactions_tx(
             .bind(article_id)
             .bind(emoji)
             .bind(new_c)
-            .bind(&t)
+            .bind(now)
             .execute(&mut **tx)
             .await?;
         }
@@ -119,7 +118,7 @@ async fn sync_article_telegram_reactions_tx(
             .bind(article_id)
             .bind(emoji)
             .bind("—")
-            .bind(&t)
+            .bind(now)
             .execute(&mut **tx)
             .await?;
         }
@@ -136,7 +135,7 @@ async fn sync_article_telegram_reactions_tx(
         .bind(article_id)
         .bind(emoji)
         .bind(count)
-        .bind(&t)
+        .bind(now)
         .execute(&mut **tx)
         .await?;
     }
@@ -144,26 +143,30 @@ async fn sync_article_telegram_reactions_tx(
 }
 
 async fn insert_content_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
     article_id: i64,
     row: &UpsertArticle<'_>,
 ) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>(
+    sqlx::query(
         r#"INSERT INTO article_contents (article_id, content_hash, title, body, fetched_at)
-           VALUES (?, ?, ?, ?, ?) RETURNING id"#,
+           VALUES (?, ?, ?, ?, ?)"#,
     )
     .bind(article_id)
     .bind(row.content_hash)
     .bind(row.title)
     .bind(row.body)
     .bind(row.now)
-    .fetch_one(&mut **tx)
-    .await
+    .execute(&mut **tx)
+    .await?;
+    let id: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(id as i64)
 }
 
 pub async fn upsert_article(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     row: UpsertArticle<'_>,
     telegram_reactions: Option<&[(String, String)]>,
 ) -> Result<(), AppError> {
@@ -174,7 +177,7 @@ pub async fn upsert_article(
     let mut tx = pool.begin().await?;
 
     let existing: Option<(i64, Vec<u8>)> = sqlx::query_as(
-        r#"SELECT a.id, c.content_hash
+        r#"SELECT CAST(a.id AS SIGNED), c.content_hash
            FROM articles a
            INNER JOIN article_contents c ON c.id = (
              SELECT MAX(id) FROM article_contents c2 WHERE c2.article_id = a.id
@@ -188,20 +191,24 @@ pub async fn upsert_article(
 
     let article_id = match existing {
         None => {
-            let article_id: i64 = sqlx::query_scalar(
+            sqlx::query(
                 r#"INSERT INTO articles (
                     feed_id, guid, published_at, first_seen_at, last_fetched_at
-                ) VALUES (?, ?, ?, ?, ?)
-                RETURNING id"#,
+                ) VALUES (?, ?, ?, ?, ?)"#,
             )
             .bind(row.feed_id)
             .bind(row.guid)
             .bind(row.published_at)
             .bind(row.now)
             .bind(row.now)
-            .fetch_one(&mut *tx)
+            .execute(&mut *tx)
             .await
             .map_err(AppError::from)?;
+            let last_id: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(AppError::from)?;
+            let article_id = last_id as i64;
             insert_content_tx(&mut tx, article_id, &row)
                 .await
                 .map_err(AppError::from)?;
@@ -251,7 +258,7 @@ pub async fn upsert_article(
 }
 
 pub async fn list_article_reaction_snapshots_bulk(
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     article_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<ArticleReactionSnapshot>>, AppError> {
     if article_ids.is_empty() {
@@ -279,7 +286,7 @@ pub async fn list_article_reaction_snapshots_bulk(
 }
 
 pub async fn list_article_reaction_snapshots(
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     article_id: i64,
 ) -> Result<Vec<ArticleReactionSnapshot>, AppError> {
     let rows = sqlx::query_as::<_, ArticleReactionSnapshot>(
@@ -293,7 +300,7 @@ pub async fn list_article_reaction_snapshots(
 }
 
 pub async fn list_article_reaction_history(
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     article_id: i64,
     limit: i64,
 ) -> Result<Vec<ArticleReactionHistoryEntry>, AppError> {
@@ -322,7 +329,7 @@ pub struct ArticleFilter {
     pub last_fetched_before: Option<DateTime<Utc>>,
 }
 
-fn push_article_where(b: &mut QueryBuilder<'_, Sqlite>, f: &ArticleFilter) {
+fn push_article_where(b: &mut QueryBuilder<'_, MySql>, f: &ArticleFilter) {
     b.push(" WHERE 1=1");
     if !f.feed_ids.is_empty() {
         if f.feed_ids.len() == 1 {
@@ -366,7 +373,7 @@ pub struct ArticleListQuery {
 }
 
 pub async fn list_articles(
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     q: ArticleListQuery,
 ) -> Result<Vec<Article>, AppError> {
     let limit = q.limit.clamp(1, 200);
@@ -383,15 +390,16 @@ pub async fn list_articles(
     Ok(rows)
 }
 
-pub async fn count_articles(pool: &SqlitePool, f: &ArticleFilter) -> Result<i64, AppError> {
+pub async fn count_articles(pool: &MySqlPool, f: &ArticleFilter) -> Result<i64, AppError> {
     let mut b = QueryBuilder::new("SELECT COUNT(*) ");
     b.push(ARTICLE_JOIN);
     push_article_where(&mut b, f);
-    let n = b.build_query_scalar::<i64>().fetch_one(pool).await?;
+    // MySQL `COUNT(*)` is a signed BIGINT, not UNSIGNED — decode as i64.
+    let n: i64 = b.build_query_scalar::<i64>().fetch_one(pool).await?;
     Ok(n)
 }
 
-pub async fn get_article(pool: &SqlitePool, id: i64) -> Result<Option<Article>, AppError> {
+pub async fn get_article(pool: &MySqlPool, id: i64) -> Result<Option<Article>, AppError> {
     let sql = format!("{}{} WHERE a.id = ?", ARTICLE_SELECT, ARTICLE_JOIN);
     let row = sqlx::query_as::<_, Article>(&sql)
         .bind(id)
@@ -408,7 +416,7 @@ pub enum ArticleContentAppendResult {
 
 pub async fn append_article_content_version(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     article_id: i64,
     title: &str,
     body: &str,
@@ -421,6 +429,7 @@ pub async fn append_article_content_version(
         .expect("db_write semaphore must stay open");
     let mut tx = pool.begin().await?;
 
+    // Column `articles.id` is signed BIGINT in schema.
     let exists: Option<i64> = sqlx::query_scalar(r#"SELECT id FROM articles WHERE id = ?"#)
         .bind(article_id)
         .fetch_optional(&mut *tx)
@@ -453,16 +462,16 @@ pub async fn append_article_content_version(
         return Ok(ArticleContentAppendResult::Unchanged);
     }
 
-    sqlx::query_scalar::<_, i64>(
+    sqlx::query(
         r#"INSERT INTO article_contents (article_id, content_hash, title, body, fetched_at)
-           VALUES (?, ?, ?, ?, ?) RETURNING id"#,
+           VALUES (?, ?, ?, ?, ?)"#,
     )
     .bind(article_id)
     .bind(content_hash)
     .bind(title)
     .bind(body)
     .bind(now)
-    .fetch_one(&mut *tx)
+    .execute(&mut *tx)
     .await?;
 
     sqlx::query(r#"UPDATE articles SET last_fetched_at = ? WHERE id = ?"#)
@@ -476,7 +485,7 @@ pub async fn append_article_content_version(
 }
 
 pub async fn list_article_contents(
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     id: i64,
 ) -> Result<Vec<ArticleContentVersion>, AppError> {
     let rows = sqlx::query_as::<_, ArticleContentVersion>(

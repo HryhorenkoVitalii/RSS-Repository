@@ -18,7 +18,15 @@ export function Toasts() {
             <span className="toast-icon">{t.ok ? '✓' : '✗'}</span>
             <span className="toast-text">
               <strong>{name}</strong>
-              {t.ok ? ' polled successfully' : ` failed${t.error ? `: ${t.error}` : ''}`}
+              {t.ok ? (
+                ' polled successfully'
+              ) : (
+                <>
+                  {' — poll failed'}
+                  {t.error ? `: ${t.error}` : ''}
+                  <span className="toast-hint"> (feed is still saved)</span>
+                </>
+              )}
             </span>
           </div>
         );

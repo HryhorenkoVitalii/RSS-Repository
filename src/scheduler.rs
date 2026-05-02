@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sqlx::SqlitePool;
+use sqlx::MySqlPool;
 use tokio::sync::Semaphore;
 
 use crate::db;
@@ -36,7 +36,7 @@ fn sleep_until_next_tick() -> Duration {
 }
 
 pub async fn run(
-    pool: SqlitePool,
+    pool: MySqlPool,
     client: reqwest::Client,
     db_write: Arc<Semaphore>,
     sem: Arc<Semaphore>,

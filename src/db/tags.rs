@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use sqlx::{QueryBuilder, SqlitePool};
+use sqlx::{QueryBuilder, MySqlPool};
 use tokio::sync::Semaphore;
 
 use crate::error::AppError;
@@ -59,13 +59,18 @@ pub fn normalize_tag_color(raw: &str) -> Result<String, AppError> {
     }
 }
 
-fn is_sqlite_unique_violation(e: &sqlx::Error) -> bool {
-    e.as_database_error()
-        .map(|d| d.message().to_uppercase().contains("UNIQUE"))
-        .unwrap_or(false)
+fn is_unique_constraint_violation(e: &sqlx::Error) -> bool {
+    let Some(db) = e.as_database_error() else {
+        return false;
+    };
+    if matches!(db.code().as_deref(), Some("1062")) {
+        return true;
+    }
+    let m = db.message().to_uppercase();
+    m.contains("DUPLICATE") || m.contains("UNIQUE")
 }
 
-pub async fn list_tags(pool: &SqlitePool) -> Result<Vec<Tag>, AppError> {
+pub async fn list_tags(pool: &MySqlPool) -> Result<Vec<Tag>, AppError> {
     let rows = sqlx::query_as::<_, Tag>(
         r#"SELECT id, name, color, created_at FROM tags ORDER BY LOWER(name)"#,
     )
@@ -76,7 +81,7 @@ pub async fn list_tags(pool: &SqlitePool) -> Result<Vec<Tag>, AppError> {
 
 pub async fn create_tag(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     name: &str,
     color: Option<&str>,
 ) -> Result<i64, AppError> {
@@ -89,16 +94,14 @@ pub async fn create_tag(
         .acquire()
         .await
         .expect("db_write semaphore must stay open");
-    let r = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO tags (name, color) VALUES (?, ?) RETURNING id"#,
-    )
-    .bind(name)
-    .bind(&color)
-    .fetch_one(pool)
-    .await;
+    let r = sqlx::query(r#"INSERT INTO tags (name, color) VALUES (?, ?)"#)
+        .bind(name)
+        .bind(&color)
+        .execute(pool)
+        .await;
     match r {
-        Ok(id) => Ok(id),
-        Err(e) if is_sqlite_unique_violation(&e) => Err(AppError::BadRequest(
+        Ok(res) => Ok(res.last_insert_id() as i64),
+        Err(e) if is_unique_constraint_violation(&e) => Err(AppError::BadRequest(
             "a tag with this name already exists".into(),
         )),
         Err(e) => Err(e.into()),
@@ -107,7 +110,7 @@ pub async fn create_tag(
 
 pub async fn update_tag(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     id: i64,
     name: Option<&str>,
     color: Option<&str>,
@@ -168,7 +171,7 @@ pub async fn update_tag(
 
 pub async fn delete_tag(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     id: i64,
 ) -> Result<bool, AppError> {
     let _w = write_lock
@@ -185,7 +188,7 @@ pub async fn delete_tag(
 /// Replace all tags for a feed (empty clears).
 pub async fn set_feed_tags(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     feed_id: i64,
     tag_ids: &[i64],
 ) -> Result<(), AppError> {
@@ -231,7 +234,7 @@ pub async fn set_feed_tags(
 }
 
 pub async fn tags_by_feed_ids(
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     feed_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<Tag>>, AppError> {
     if feed_ids.is_empty() {

@@ -13,7 +13,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use sqlx::SqlitePool;
+use sqlx::MySqlPool;
 use tokio::sync::{broadcast, Semaphore};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
@@ -48,7 +48,7 @@ pub(super) fn base_url_from_headers(headers: &axum::http::HeaderMap) -> String {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: SqlitePool,
+    pub pool: MySqlPool,
     pub http: reqwest::Client,
     /// One writer at a time for SQLite (avoids SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT under concurrent polls).
     pub db_write: Arc<Semaphore>,

@@ -12,7 +12,7 @@ axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = { version = "0.3", features = ["sink"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate", "chrono", "macros"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "migrate", "chrono", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "deflate", "json"] }
 rss = "2.0"
 atom_syndication = { version = "0.12", default-features = false }
@@ -33,4 +33,6 @@ ammonia = "4"
 scraper = "0.22"
 
 [dev-dependencies]
+testcontainers = "0.24"
 tower = { version = "0.5", features = ["util"] }
+url = "2.5"

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use once_cell::sync::OnceCell;
 use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::MySqlPool;
 use tokio::sync::Semaphore;
 
 use crate::browser_http::{headers_for, FetchProfile};
@@ -139,7 +139,7 @@ pub async fn download_and_store(
 
 pub async fn save_media_record(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     sha256: &str,
     original_url: &str,
     mime_type: &str,
@@ -150,7 +150,7 @@ pub async fn save_media_record(
         .await
         .expect("db_write semaphore must stay open");
     sqlx::query(
-        r#"INSERT OR IGNORE INTO media (sha256, original_url, mime_type, file_size) VALUES (?, ?, ?, ?)"#,
+        r#"INSERT IGNORE INTO media (sha256, original_url, mime_type, file_size) VALUES (?, ?, ?, ?)"#,
     )
     .bind(sha256)
     .bind(original_url)
@@ -169,7 +169,7 @@ pub struct MediaRow {
     pub mime_type: String,
 }
 
-pub async fn get_media_by_hash(pool: &SqlitePool, sha256: &str) -> Result<Option<MediaRow>, AppError> {
+pub async fn get_media_by_hash(pool: &MySqlPool, sha256: &str) -> Result<Option<MediaRow>, AppError> {
     let row = sqlx::query_as::<_, MediaRow>(
         "SELECT sha256, mime_type FROM media WHERE sha256 = ?",
     )

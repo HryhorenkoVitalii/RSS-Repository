@@ -21,10 +21,16 @@ pub(crate) fn spawn_feed_poll_background(state: AppState, feed: Feed) {
             },
             Err(e) => {
                 tracing::warn!(feed_id, error = %e, "poll failed");
+                let mut msg = e;
+                const MAX: usize = 800;
+                if msg.len() > MAX {
+                    msg.truncate(MAX);
+                    msg.push('…');
+                }
                 PollEvent {
                     feed_id,
                     ok: false,
-                    error: Some("poll failed".to_string()),
+                    error: Some(msg),
                 }
             }
         };

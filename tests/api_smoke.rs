@@ -1,4 +1,10 @@
-//! Интеграционные проверки роутера (in-memory SQLite + миграции).
+//! Интеграционные проверки роутера (MariaDB/MySQL + миграции).
+//!
+//! По умолчанию тест помечен `#[ignore]`: нужен работающий сервер БД.
+//! Пример (MariaDB с пробросом порта на хост при **первом** `podman run` БД):
+//!   EXPOSE_MARIADB_PORT=3306 ./scripts/podman-run.sh   # затем в другом терминале:
+//!   RSS_TEST_DATABASE_URL='mysql://rss:rss_dev_change_me@127.0.0.1:3306/rss_repository' \
+//!     cargo test health_database_ok_and_openapi -- --ignored
 
 use std::sync::Arc;
 
@@ -6,16 +12,28 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use reqwest::Client;
 use rss_repository::{router, AppState};
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlSslMode};
+use std::str::FromStr;
 use tokio::sync::{broadcast, Semaphore};
 use tower::ServiceExt;
 
 async fn test_app() -> axum::Router {
-    let pool = SqlitePoolOptions::new()
+    let url = std::env::var("RSS_TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("RSS_TEST_DATABASE_URL or DATABASE_URL for integration test");
+    assert!(
+        url.starts_with("mysql://"),
+        "expected mysql:// URL, got {}",
+        url
+    );
+    let opts = MySqlConnectOptions::from_str(&url)
+        .expect("parse DATABASE_URL")
+        .ssl_mode(MySqlSslMode::Disabled);
+    let pool = MySqlPoolOptions::new()
         .max_connections(2)
-        .connect("sqlite::memory:")
+        .connect_with(opts)
         .await
-        .expect("memory pool");
+        .expect("mysql pool");
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
@@ -36,6 +54,7 @@ async fn test_app() -> axum::Router {
 }
 
 #[tokio::test]
+#[ignore = "needs RSS_TEST_DATABASE_URL or DATABASE_URL=mysql://... (running MariaDB)"]
 async fn health_database_ok_and_openapi() {
     let app = test_app().await;
     let res = app

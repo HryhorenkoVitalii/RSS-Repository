@@ -274,14 +274,38 @@ export async function updateFeedTelegramMaxItems(
   });
 }
 
+async function throwIfBadPost(res: Response, text: string): Promise<void> {
+  if (res.ok) return;
+  let msg = `request failed: ${res.status}`;
+  try {
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'error' in data &&
+      typeof (data as { error: string }).error === 'string'
+    ) {
+      msg = (data as { error: string }).error.trim() || msg;
+    }
+  } catch {
+    /* keep msg */
+  }
+  throw new Error(msg);
+}
+
 export async function pollFeedNow(id: number): Promise<void> {
-  const res = await fetch(`${API_PREFIX}/feeds/${id}/poll`, { method: 'POST', headers: authHeaders() });
-  if (!res.ok) throw new Error(`poll request failed: ${res.status}`);
+  const res = await fetch(`${API_PREFIX}/feeds/${id}/poll`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  const text = await res.text();
+  await throwIfBadPost(res, text);
 }
 
 export async function pollAllFeeds(): Promise<void> {
   const res = await fetch(`${API_PREFIX}/feeds/poll-all`, { method: 'POST', headers: authHeaders() });
-  if (!res.ok) throw new Error(`poll-all request failed: ${res.status}`);
+  const text = await res.text();
+  await throwIfBadPost(res, text);
 }
 
 export type PollEvent = {

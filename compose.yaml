@@ -1,0 +1,45 @@
+# RSS Repository — два сервиса в одном проекте Compose.
+# Сеть создаётся только для этого проекта; MariaDB наружу не публикуется (только приложение в браузер).
+# Исходящий HTTP из приложения к RSS в интернете разрешён (сеть не internal:true).
+
+name: rss-repository
+
+services:
+  db:
+    image: docker.io/mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-rss_repository}
+      MARIADB_USER: ${MARIADB_USER:-rss}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-rss_dev_change_me}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root_dev_change_me}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "--silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 15s
+
+  app:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: ${RSS_IMAGE:-rss-repository:local}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # При смене PORT задайте PUBLIC_BASE_URL вручную (например http://127.0.0.1:9000).
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:8080}
+      DATABASE_URL: mysql://${MARIADB_USER:-rss}:${MARIADB_PASSWORD:-rss_dev_change_me}@db:3306/${MARIADB_DATABASE:-rss_repository}
+      MEDIA_DIR: /data/media
+    volumes:
+      - "${HOST_DATA_DIR:-./data}:/data"
+
+volumes:
+  mariadb_data:

@@ -22,13 +22,13 @@ pub struct ErrorBody {
     pub error: String,
 }
 
-/// Текст ошибки SQLite/sqlx: «(code: 8)» = `SQLITE_READONLY`.
+/// Текст ошибки «только чтение» (SQLite/sqlx и др.).
 fn error_text_implies_readonly(text: &str) -> bool {
     let lower = text.to_lowercase();
     if lower.contains("readonly") || lower.contains("read-only") {
         return true;
     }
-    // Формат libsqlite3/sqlx: `(code: 8)` или редкие варианты
+    // SQLite: `(code: 8)` = SQLITE_READONLY
     text.contains("(code: 8)") || text.contains("code: 8)")
 }
 

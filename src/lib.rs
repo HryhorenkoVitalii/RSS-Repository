@@ -15,36 +15,12 @@ mod telegram;
 
 pub use routes::{router, AppState};
 
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::sqlite::{
-    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
-};
+use sqlx::mysql::MySqlPoolOptions;
 use tokio::sync::Semaphore;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-fn sqlite_journal_mode() -> SqliteJournalMode {
-    match std::env::var("SQLITE_JOURNAL_MODE") {
-        Ok(s) => match s.trim().parse() {
-            Ok(m) => {
-                if m != SqliteJournalMode::Wal {
-                    tracing::info!(?m, "SQLite journal mode (non-WAL)");
-                }
-                m
-            }
-            Err(_) => {
-                tracing::warn!(
-                    value = s.trim(),
-                    "invalid SQLITE_JOURNAL_MODE; using WAL"
-                );
-                SqliteJournalMode::Wal
-            }
-        },
-        Err(_) => SqliteJournalMode::Wal,
-    }
-}
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -62,28 +38,25 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let database_url = std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
 
-    let journal_mode = sqlite_journal_mode();
-    let connect_options = SqliteConnectOptions::from_str(&database_url)
-        .map_err(|e| format!("invalid DATABASE_URL: {e}"))?
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .busy_timeout(Duration::from_secs(15))
-        .journal_mode(journal_mode)
-        .synchronous(SqliteSynchronous::Normal);
+    if !database_url.starts_with("mysql://") {
+        return Err(
+            "DATABASE_URL must be a MySQL/MariaDB URL, e.g. mysql://user:pass@host:3306/dbname"
+                .into(),
+        );
+    }
 
-    let pool = SqlitePoolOptions::new()
+    let pool = MySqlPoolOptions::new()
         .max_connections(10)
-        .connect_with(connect_options)
-        .await?;
+        .acquire_timeout(Duration::from_secs(60))
+        .connect(&database_url)
+        .await
+        .map_err(|e| format!("database connection failed ({database_url}): {e}"))?;
 
     if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
         let mut msg = format!("database migration failed: {e}");
         if error::error_chain_implies_readonly(&e) {
             msg.push_str(
-                "\n\nSQLite READONLY (код 8): нет права записи в файл БД или в каталог (нужны файлы .db-wal / .db-shm рядом с базой). \
-Длинное число в тексте ошибки — это версия миграции (префикс имени `migrations/*.sql`), а не отдельный «код ошибки».\n\
-• Podman: том `-v …/data:/data:U` (см. scripts/podman-run.sh) или `sudo chown -R 33:33` на каталог с БД на хосте.\n\
-• Попробуй переменную окружения SQLITE_JOURNAL_MODE=delete.\n",
+                "\n\n(legacy SQLite hint ignored for MariaDB — check DB user grants and disk.)",
             );
         }
         return Err(msg.into());

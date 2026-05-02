@@ -1,5 +1,5 @@
 # podman build -t rss-repository .
-# podman run --rm -p 8080:8080 -v rss-repo-data:/data rss-repository
+# Запуск с MariaDB: см. scripts/podman-run.sh (передаётся DATABASE_URL).
 
 FROM node:22-bookworm-slim AS frontend
 WORKDIR /app
@@ -32,7 +32,6 @@ COPY container/nginx.conf /etc/nginx/nginx.conf
 COPY container/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /rss-repository
 
-ENV DATABASE_URL=sqlite:/data/rss_repository.db
 ENV BIND_ADDR=127.0.0.1:7878
 ENV RUST_LOG=info,rss_repository=info
 

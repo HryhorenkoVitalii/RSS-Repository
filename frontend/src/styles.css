@@ -4017,6 +4017,14 @@ button.poll-error {
   font-weight: 600;
 }
 
+.toast-hint {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
 /* ─── Scrollbar ─── */
 
 ::-webkit-scrollbar {

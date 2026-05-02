@@ -1,9 +1,9 @@
-use sqlx::SqlitePool;
+use sqlx::MySqlPool;
 use tokio::sync::Semaphore;
 
 pub async fn insert_request_log(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     method: &str,
     path: &str,
     status_code: i64,

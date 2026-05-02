@@ -1,6 +1,6 @@
 # RSS Repository
 
-RSS-агрегатор: бекенд на **Rust** (JSON API, SQLite, фоновый опрос фидов, история версий текста статей) и **веб-интерфейс** (React + TypeScript + Vite) в каталоге `frontend/`.
+RSS-агрегатор: бекенд на **Rust** (JSON API, MariaDB/MySQL, фоновый опрос фидов, история версий текста статей) и **веб-интерфейс** (React + TypeScript + Vite) в каталоге `frontend/`.
 
 ## Содержание
 
@@ -20,7 +20,7 @@ RSS-агрегатор: бекенд на **Rust** (JSON API, SQLite, фонов
 | Режим | Что нужно |
 |-------|-----------|
 | Локальная разработка | **Rust** (edition 2021), **Node.js 20+** |
-| Только API | Rust, файл `.env` с `DATABASE_URL` |
+| Только API | Rust, файл `.env` с `DATABASE_URL` (MySQL/MariaDB) |
 | Контейнер | **Podman** или **Docker**, сборка сама тянет Node и Rust внутри образа |
 
 ## База данных
@@ -29,11 +29,11 @@ RSS-агрегатор: бекенд на **Rust** (JSON API, SQLite, фонов
 cp .env.example .env
 ```
 
-`DATABASE_URL=sqlite:rss_repository.db` — файл создаётся при первом запуске, миграции применяются автоматически при старте приложения.
+`DATABASE_URL` — URL вида `mysql://user:password@host:3306/database_name`. Миграции применяются автоматически при старте приложения.
 
-Схема описана **одним файлом** `migrations/20260424120000_squashed_schema.sql`. Если база создавалась старой цепочкой (`_sqlx_migrations` с другими именами файлов), удали файл SQLite (и `-wal` / `-shm`) или смени `DATABASE_URL`, иначе применение миграций может конфликтовать с уже существующими таблицами.
+Схема описана **одним файлом** `migrations/20260424120000_squashed_schema.sql`. Если таблицы уже созданы другой версией миграций, очистите базу или используйте новое имя БД.
 
-Приложение подключается к SQLite с **WAL** и **busy_timeout 15&nbsp;с**; все **записи** в БД дополнительно сериализуются одним семафором (чтения идут параллельно). Это убирает типичные коды **`5` (SQLITE_BUSY)** и **`517` (SQLITE_BUSY_SNAPSHOT)** при одновременных писателях. Если база на **NFS/SMB** или общей сетевой папке, SQLite может вести себя нестабильно — лучше локальный диск.
+Все **записи** в БД дополнительно сериализуются одним семафором (чтения идут параллельно).
 
 ## Запуск
 
@@ -74,78 +74,80 @@ cd frontend && npm install && npm run build
 |-----------|------|
 | **nginx** | Слушает **8080** (единая точка входа): отдаёт SPA из `frontend/dist`, проксирует `/api/` и `/feed.xml` на бекенд. |
 | **rss-repository** | Слушает только **127.0.0.1:7878** внутри контейнера (не публикуется наружу). |
-| **Каталог `/data`** | В контейнере здесь SQLite: `DATABASE_URL=sqlite:/data/rss_repository.db`. На хост этот путь монтируется **bind mount**’ом — файл БД живёт **вне** слоя контейнера и не пропадает при `podman rm` / новом образе. |
+| **Каталог `/data`** | Монтируется для **`MEDIA_DIR=/data/media`**. База — контейнер **MariaDB** в том же Compose-проекте (том `mariadb_data`), сеть только между сервисами стека. |
 
-### Одна команда
+### Compose (рекомендуется)
+
+Нужен **Docker Compose v2** (`docker compose`) или **Podman Compose** (`podman compose`).
 
 ```bash
 chmod +x scripts/podman-run.sh
 ./scripts/podman-run.sh
 ```
 
-Открой **http://127.0.0.1:8080**. **Порт 5173** используется только локальным **`npm run dev`** (Vite); **в контейнере его нет** — весь UI и API идут через **8080**.
-
-База создаётся на **хосте** в каталоге **`data/`** в корне репозитория (файл **`data/rss_repository.db`**). Перезапуск или пересборка контейнера данные не стирает, пока не удалишь этот каталог.
-
-Переопределить путь на хосте:
+Либо из корня репозитория:
 
 ```bash
-HOST_DATA_DIR=/var/lib/rss-repo ./scripts/podman-run.sh
+docker compose up -d --build
+# или: podman compose up -d --build
 ```
 
-Скрипт поддерживает:
+Файл **`compose.yaml`**: проект с именем **`rss-repository`**, отдельная сеть для сервисов **`db`** и **`app`**. **Порт 3306 у MariaDB на хост не пробрасывается** — к БД извне не подключиться, только приложение обращается к хосту **`db`**. Наружу открыт только **`PORT`** (по умолчанию **8080**) у приложения.
+
+Открой **http://127.0.0.1:8080**. **Порт 5173** — только у **`npm run dev`** (Vite).
+
+Остановка и тома:
+
+```bash
+docker compose down          # контейнеры
+docker compose down -v       # + удалить том MariaDB (чистая БД)
+```
+
+Параметры задаются через **`.env`** в корне репозитория или переменные окружения (см. таблицу).
 
 | Переменная | Пример | Назначение |
 |------------|--------|------------|
-| `HOST_DATA_DIR` | `/var/lib/rss` | Каталог **на хосте** → монтируется в `/data` внутри контейнера (по умолчанию `<корень репо>/data`) |
-| `PORT` | `9000` | Проброс хоста → контейнер `:8080` (`-p $PORT:8080`) |
-| `PUBLIC_BASE_URL` | `https://rss.example.org` | База для ссылок в теле `/feed.xml` (читалки и пункты RSS) |
-| `IMAGE` | `rss-repository` | Тег образа |
-| `PODMAN` | `docker` | Запуск через Docker вместо Podman |
-| `DETACHED` | `1` | Запуск в фоне (`-d`); в консоль выводится URL |
-| `SKIP_BUILD` | `1` | Не пересобирать образ перед `run` (быстрый перезапуск) |
-| `VOLUME_SUFFIX` | `:U` | Для Podman на системах с SELinux: суффикс к монтированию `…:/data:U` |
+| `HOST_DATA_DIR` | `./data` или абсолютный путь | Каталог на хосте → `/data` в приложении |
+| `MARIADB_*` | см. `compose.yaml` | Имя БД, пользователь, пароли MariaDB |
+| `PORT` | `9000` | Проброс `хост:$PORT` → `app:8080` |
+| `PUBLIC_BASE_URL` | `https://rss.example.org` | Ссылки в `/feed.xml`; при смене `PORT` задайте URL с нужным портом |
+| `RSS_IMAGE` | `rss-repository:local` | Тег собранного образа приложения |
+| `COMPOSE_CMD` | `podman compose` | Явно указать команду Compose |
+| `COMPOSE_UP_FLAGS` | `--build` | Флаги для `compose up` (по умолчанию `-d --build`) |
 
 ### Вручную
 
-**Рекомендуется bind mount** (файл БД сразу на диске хоста):
+Поднимите MariaDB (или используйте облачный MySQL), затем передайте **`DATABASE_URL`** и при необходимости **`MEDIA_DIR`**:
 
 ```bash
-mkdir -p ./data
+mkdir -p ./data/media
 podman build -t rss-repository -f Containerfile .
 # или: docker build -t rss-repository -f Containerfile .
 
 podman run --rm -p 8080:8080 \
   -e PUBLIC_BASE_URL=http://127.0.0.1:8080 \
+  -e DATABASE_URL='mysql://user:pass@host:3306/rss_repository' \
+  -e MEDIA_DIR=/data/media \
   -v "$(pwd)/data:/data" \
-  rss-repository
-```
-
-Альтернатива — **именованный volume** Podman/Docker (данные тоже переживают перезапуск контейнера, но лежат в хранилище движка, не в явной папке проекта):
-
-```bash
-podman run --rm -p 8080:8080 \
-  -e PUBLIC_BASE_URL=http://127.0.0.1:8080 \
-  -v rss-repository-data:/data \
   rss-repository
 ```
 
 На продакшене задай **`PUBLIC_BASE_URL`** с публичным **https://…** без завершающего слэша, чтобы ссылки в RSS вели на твой сайт.
 
-### Логи и остановка
+### Логи и остановка (Compose)
 
-- Логи: `podman logs -f rss-repository` (если запускал без `--rm` и с фиксированным именем).
-- Контейнер со скрипта использует имя **`rss-repository`**; если порт занят или контейнер завис, сначала: `podman stop rss-repository` или смени **`PORT`**.
+- Логи: `docker compose logs -f app` / `docker compose logs -f db` (или `podman compose …`).
+- Остановка: `docker compose down` в каталоге с **`compose.yaml`**.
 
-**Частые проблемы (разработка):** `ERR_CONNECTION_REFUSED` на :5173 — не запущен Vite. Данные не грузятся в UI — проверь, что API слушает и на **`GET /api/health`** в JSON поле **`ok`** равно `true` (живость SQLite; отдельно **`database`** / **`media_dir`**). Порт **8080** занят локально — освободи или смени **`BIND_ADDR`** / **`PORT`**.
+**Частые проблемы (разработка):** `ERR_CONNECTION_REFUSED` на :5173 — не запущен Vite. Данные не грузятся в UI — проверь **`GET /api/health`**: **`ok`** и **`database`** = `ok` (и при необходимости **`media_dir`**). Порт **8080** занят — смени **`PORT`** в `.env` или окружении.
 
-Для ссылок в **`/feed.xml`** при dev с Vite удобно: **`PUBLIC_BASE_URL=http://127.0.0.1:5173`**. В контейнере по умолчанию скрипт передаёт `http://127.0.0.1:${PORT:-8080}`.
+Для ссылок в **`/feed.xml`** при dev с Vite удобно: **`PUBLIC_BASE_URL=http://127.0.0.1:5173`**. В Compose задайте **`PUBLIC_BASE_URL`** в `.env` (по умолчанию в **`compose.yaml`**: `http://127.0.0.1:8080`).
 
 ## Переменные окружения
 
 | Переменная | Где задаётся | Назначение |
 |------------|--------------|------------|
-| `DATABASE_URL` | `.env`, контейнер | SQLite URL (**обязательно** для `cargo run`; в образе по умолчанию `sqlite:/data/rss_repository.db`) |
+| `DATABASE_URL` | `.env`, `-e` в `podman run` | MySQL/MariaDB URL (**обязательно**), например `mysql://user:pass@host:3306/dbname` |
 | `BIND_ADDR` | `.env` | Адрес прослушивания Axum (по умолчанию `0.0.0.0:8080`; в контейнере entrypoint задаёт `127.0.0.1:7878`, менять обычно не нужно) |
 | `PUBLIC_BASE_URL` | `.env`, `-e` в `podman run` | Базовый URL для ссылок внутри `/feed.xml`; если пусто — берётся из заголовков запроса (`Host`, `X-Forwarded-*`) |
 | `FRONTEND_ORIGIN` | `.env` | Если задана — CORS только для этого origin; иначе для API допускаются все origins |
@@ -159,7 +161,7 @@ podman run --rm -p 8080:8080 \
 
 | Метод | Путь | Описание |
 |--------|------|----------|
-| GET | `/api/health` | Живость SQLite (`ok`, `database`); каталог медиа (`media_dir`, не влияет на `ok`) |
+| GET | `/api/health` | Живость БД (`ok`, `database`); каталог медиа (`media_dir`, не влияет на `ok`) |
 | GET | `/api/openapi.json` | Черновой OpenAPI 3.0 (список основных путей) |
 | GET | `/api/feeds?page=` | Фиды (пагинация, 20 на страницу) |
 | GET | `/api/feeds/options` | `id` / `url` / `title` для фильтров (лёгкий ответ) |

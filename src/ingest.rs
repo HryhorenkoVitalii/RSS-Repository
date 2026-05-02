@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use sqlx::SqlitePool;
+use sqlx::MySqlPool;
 use tokio::sync::Semaphore;
 
 use crate::db::{self, Feed};
@@ -27,7 +27,7 @@ fn item_display_body(item: &rss::Item) -> String {
 /// Fetch feed URL, upsert all items, update feed title and poll metadata.
 pub async fn poll_feed(
     write_lock: &Semaphore,
-    pool: &SqlitePool,
+    pool: &MySqlPool,
     client: &reqwest::Client,
     feed: &Feed,
 ) -> Result<(), String> {
