@@ -37,8 +37,8 @@ type SettingsMenuProps = {
 export function SettingsMenu({ aiAssistantFabVisible, onAiAssistantFabVisibleChange }: SettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState(() => localStorage.getItem('rss_api_key') ?? '');
-  const [openRouterKey, setOpenRouterKey] = useState('');
-  const [openRouterModel, setOpenRouterModelState] = useState(DEFAULT_OPENROUTER_MODEL);
+  const [openRouterKey, setOpenRouterKey] = useState(() => getOpenRouterApiKey() ?? '');
+  const [openRouterModel, setOpenRouterModelState] = useState(() => getOpenRouterModel());
   const [openRouterLogOpen, setOpenRouterLogOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -64,29 +64,33 @@ export function SettingsMenu({ aiAssistantFabVisible, onAiAssistantFabVisibleCha
   }, [open, openRouterLogOpen]);
 
   useEffect(() => {
-    if (!open) {
-      setOpenRouterLogOpen(false);
-      return;
-    }
-    setOpenRouterKey(getOpenRouterApiKey() ?? '');
-    setOpenRouterModelState(getOpenRouterModel());
+    if (!open) setOpenRouterLogOpen(false);
   }, [open]);
 
-  function save() {
-    setApiKey(key.trim() || null);
-    setOpenRouterApiKey(openRouterKey.trim() || null);
-    const m = openRouterModel.trim();
-    setOpenRouterModel(m.length > 0 ? m : null);
-    setOpen(false);
-    window.dispatchEvent(new Event('rss-prefs-changed'));
-  }
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setApiKey(key.trim() || null);
+      setOpenRouterApiKey(openRouterKey.trim() || null);
+      const m = openRouterModel.trim();
+      setOpenRouterModel(m.length > 0 ? m : null);
+      window.dispatchEvent(new Event('rss-prefs-changed'));
+    }, 450);
+    return () => window.clearTimeout(id);
+  }, [key, openRouterKey, openRouterModel]);
 
   return (
     <div ref={ref} className="settings-menu-wrap">
       <button
         type="button"
         className="btn-ghost btn-compact settings-menu-trigger"
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          if (!open) {
+            setKey(localStorage.getItem('rss_api_key') ?? '');
+            setOpenRouterKey(getOpenRouterApiKey() ?? '');
+            setOpenRouterModelState(getOpenRouterModel());
+          }
+          setOpen((o) => !o);
+        }}
         title="Settings"
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -159,10 +163,6 @@ export function SettingsMenu({ aiAssistantFabVisible, onAiAssistantFabVisibleCha
               autoComplete="off"
             />
           </label>
-
-          <button type="button" className="btn-secondary btn-compact" onClick={save} style={{ marginTop: 12 }}>
-            Save
-          </button>
 
           <p className="settings-dropdown-heading" style={{ marginTop: 14 }}>
             Debug

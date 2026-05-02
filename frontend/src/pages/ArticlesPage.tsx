@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { formatArticlesListForAi } from '../aiScreenDigest';
+import {
+  buildNewsAnalysisPrompt,
+  describeArticleFiltersForPrompt,
+  formatArticlesListForAi,
+} from '../aiScreenDigest';
 import { useAiScreenSection } from '../aiScreenContext';
 import {
   DEFAULT_TAG_COLOR,
@@ -27,6 +31,166 @@ type ArticleViewMode = 'list' | 'tiles';
 
 function parseViewMode(raw: string | null): ArticleViewMode {
   return raw === 'tiles' ? 'tiles' : 'list';
+}
+
+const MAX_ARTICLES_IN_AI_PROMPT = 120;
+
+function AiPromptModal({
+  open,
+  onClose,
+  promptText,
+  error,
+  meta,
+  articlesCap,
+}: {
+  open: boolean;
+  onClose: () => void;
+  promptText: string;
+  error: string | null;
+  meta: { included: number; total: number } | null;
+  articlesCap: number;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!open) setCopied(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || error || !promptText.trim()) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, [open, error, promptText]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  const handleCopy = useCallback(async () => {
+    if (!promptText.trim() || error) return;
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2600);
+    } catch {
+      window.prompt('Копирование недоступно. Выделите текст в поле ниже:', promptText);
+    }
+  }, [promptText, error]);
+
+  if (!open) return null;
+
+  return (
+    <div className="ai-prompt-modal-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="ai-prompt-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ai-prompt-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="ai-prompt-modal-head">
+          <div className="ai-prompt-modal-head-text">
+            <h2 id="ai-prompt-modal-title" className="ai-prompt-modal-title">
+              Промпт для ИИ
+            </h2>
+            {meta != null && error == null ? (
+              <p className="ai-prompt-modal-meta muted small">
+                В тексте: <strong>{meta.included}</strong> статей
+                {meta.total > meta.included
+                  ? ` (по фильтрам в базе ${meta.total}; в промпт не больше ${articlesCap})`
+                  : meta.total > 0
+                    ? ` · всего по фильтрам: ${meta.total}`
+                    : null}
+              </p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="ai-prompt-modal-close"
+            onClick={onClose}
+            aria-label="Закрыть"
+          >
+            ×
+          </button>
+        </div>
+
+        {error ? (
+          <p className="ai-prompt-modal-err">{error}</p>
+        ) : (
+          <>
+            <textarea
+              ref={textareaRef}
+              className="ai-prompt-modal-textarea mono"
+              readOnly
+              value={promptText}
+              spellCheck={false}
+              aria-label="Текст промпта для языковой модели"
+            />
+            <div className="ai-prompt-modal-toolbar">
+              <button type="button" className="btn-primary" onClick={() => void handleCopy()}>
+                Копировать
+              </button>
+              {copied ? (
+                <span className="ai-prompt-modal-copied" role="status">
+                  Скопировано в буфер обмена
+                </span>
+              ) : null}
+            </div>
+          </>
+        )}
+
+        <div className="ai-prompt-modal-footer">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Закрыть
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+async function fetchArticlesForAnalysisPrompt(
+  base: {
+    feedIds?: string[];
+    tagIds?: string[];
+    modifiedOnly?: boolean;
+    dateFrom?: string;
+    dateTo?: string;
+  },
+  maxItems: number,
+): Promise<{ articles: Article[]; total: number }> {
+  const out: Article[] = [];
+  let total = 0;
+  let page = 0;
+  for (;;) {
+    const r = await listArticles({
+      ...base,
+      ...(page > 0 ? { page } : {}),
+    });
+    total = r.total;
+    out.push(...r.articles);
+    if (out.length >= maxItems) break;
+    if (out.length >= total) break;
+    if (r.articles.length === 0 || r.articles.length < r.limit) break;
+    page += 1;
+  }
+  return { articles: out.slice(0, maxItems), total };
 }
 
 /** First usable image URL from stored article HTML (img src or video poster). */
@@ -184,7 +348,6 @@ export function ArticlesPage() {
       },
       { replace: true },
     );
-    setFiltersOpen(false);
   }
 
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
@@ -203,6 +366,76 @@ export function ArticlesPage() {
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersDrawerRef = useRef<HTMLElement | null>(null);
+  const [aiPromptBusy, setAiPromptBusy] = useState(false);
+  const [aiPromptModalOpen, setAiPromptModalOpen] = useState(false);
+  const [aiPromptText, setAiPromptText] = useState('');
+  const [aiPromptError, setAiPromptError] = useState<string | null>(null);
+  const [aiPromptMeta, setAiPromptMeta] = useState<{ included: number; total: number } | null>(
+    null,
+  );
+
+  const feedMap = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const f of feeds) m.set(f.id, f.title?.trim() || f.url);
+    return m;
+  }, [feeds]);
+
+  const openAiPromptModal = useCallback(async () => {
+    if (aiPromptBusy) return;
+    setAiPromptBusy(true);
+    setAiPromptError(null);
+    try {
+      const { articles: fetched, total: matchTotal } = await fetchArticlesForAnalysisPrompt(
+        {
+          feedIds: feedIds.length > 0 ? feedIds : undefined,
+          tagIds: tagIds.length > 0 ? tagIds : undefined,
+          modifiedOnly,
+          dateFrom: dateFrom || undefined,
+          dateTo: dateTo || undefined,
+        },
+        MAX_ARTICLES_IN_AI_PROMPT,
+      );
+
+      const filterBlock = describeArticleFiltersForPrompt({
+        feedIds,
+        tagIds,
+        modifiedOnly,
+        dateFrom,
+        dateTo,
+        feeds,
+        tags: allTags,
+      });
+
+      const prompt = buildNewsAnalysisPrompt({
+        articles: fetched,
+        feedTitle: (fid) => feedMap.get(fid),
+        filterBlock,
+        totalMatching: matchTotal,
+        maxIncluded: MAX_ARTICLES_IN_AI_PROMPT,
+      });
+
+      setAiPromptText(prompt);
+      setAiPromptMeta({ included: fetched.length, total: matchTotal });
+      setAiPromptModalOpen(true);
+    } catch (e) {
+      setAiPromptText('');
+      setAiPromptMeta(null);
+      setAiPromptError(e instanceof Error ? e.message : 'Не удалось собрать промпт');
+      setAiPromptModalOpen(true);
+    } finally {
+      setAiPromptBusy(false);
+    }
+  }, [
+    aiPromptBusy,
+    allTags,
+    dateFrom,
+    dateTo,
+    feedIds.join(','),
+    feedMap,
+    feeds,
+    modifiedOnly,
+    tagIds.join(','),
+  ]);
 
   useEffect(() => {
     if (!filtersOpen) return;
@@ -248,12 +481,6 @@ export function ArticlesPage() {
     return sortedTags.filter((t) => t.name.toLowerCase().includes(q));
   }, [sortedTags, tagSearch]);
 
-  const feedMap = useMemo(() => {
-    const m = new Map<number, string>();
-    for (const f of feeds) m.set(f.id, f.title?.trim() || f.url);
-    return m;
-  }, [feeds]);
-
   const feedTagsByFeedId = useMemo(() => {
     const m = new Map<number, Tag[]>();
     for (const f of feeds) {
@@ -293,6 +520,14 @@ export function ArticlesPage() {
 
   return (
     <>
+      <AiPromptModal
+        open={aiPromptModalOpen}
+        onClose={() => setAiPromptModalOpen(false)}
+        promptText={aiPromptText}
+        error={aiPromptError}
+        meta={aiPromptMeta}
+        articlesCap={MAX_ARTICLES_IN_AI_PROMPT}
+      />
       {err ? <p className="err">{err}</p> : null}
 
       <button
@@ -494,7 +729,7 @@ export function ArticlesPage() {
                     </button>
                   </div>
 
-                  <div className="articles-filters-rss-row">
+                  <div className="articles-filters-export-row">
                     <a
                       className="btn-rss-export"
                       href={feedRssPath(rssParams)}
@@ -504,6 +739,15 @@ export function ArticlesPage() {
                     >
                       RSS Export
                     </a>
+                    <button
+                      type="button"
+                      className="btn-ai-prompt"
+                      disabled={loading || aiPromptBusy}
+                      title="Собрать промпт для ИИ по применённым фильтрам (до 120 статей) и открыть в окне"
+                      onClick={() => void openAiPromptModal()}
+                    >
+                      {aiPromptBusy ? 'Сборка…' : 'Промпт для ИИ'}
+                    </button>
                   </div>
                 </form>
               </div>
@@ -588,6 +832,25 @@ export function ArticlesPage() {
   );
 }
 
+function ArticleVersionPill({ count }: { count: number }) {
+  if (count <= 1) return null;
+  return (
+    <span
+      className="article-version-pill"
+      title={`${count} saved snapshots — open to compare versions`}
+    >
+      <span className="article-version-pill__icon" aria-hidden>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+          <polyline points="2 17 12 22 22 17" />
+        </svg>
+      </span>
+      Updated
+      <span className="article-version-pill__n">{count}</span>
+    </span>
+  );
+}
+
 function ArticleTileCover({ src }: { src: string | null }) {
   const [broken, setBroken] = useState(false);
   const showImg = src && !broken;
@@ -629,10 +892,6 @@ function ArticleTile({
   const imgUrl = useMemo(() => firstImageUrlFromArticle(a.body), [a.body]);
   const published = formatDateTime(a.published_at ?? undefined);
   const fetched = formatDateTime(a.last_fetched_at);
-  const versions =
-    a.content_version_count > 1 ? (
-      <span className="badge">{a.content_version_count} ver</span>
-    ) : null;
   const rx = a.telegram_reactions ?? [];
   const tagAccent = feedTags[0]?.color ?? DEFAULT_TAG_COLOR;
 
@@ -650,8 +909,16 @@ function ArticleTile({
       <Link to={`/articles/${a.id}`} className="article-tile-link">
         <ArticleTileCover src={imgUrl} />
         <div className="article-tile-body">
-          <h3 className="article-tile-heading">{a.title || '(no title)'}</h3>
-          {versions ? <div className="article-tile-badges">{versions}</div> : null}
+          <div className="article-tile-heading-row">
+            <h3 className="article-tile-heading">{a.title || '(no title)'}</h3>
+            <ArticleVersionPill count={a.content_version_count} />
+          </div>
+          {feedName ? (
+            <p className="article-tile-source">
+              <span className="article-tile-source__label">Source</span>
+              <span className="article-tile-source__name">{feedName}</span>
+            </p>
+          ) : null}
           <ArticleTagChips tags={feedTags} className="feed-card-tag-chips article-tile-tag-chips" />
         </div>
       </Link>
@@ -660,8 +927,7 @@ function ArticleTile({
           <TelegramReactionsStrip articleId={a.id} reactions={rx} />
         </div>
       ) : null}
-      <div className="article-tile-meta meta">
-        {feedName && <span>{feedName}</span>}
+      <div className="article-tile-meta meta article-tile-meta--dates">
         <span title={published.title}>{published.display}</span>
         <span title={fetched.title}>Fetched {fetched.display}</span>
       </div>
@@ -680,10 +946,6 @@ function ArticleRow({
 }) {
   const published = formatDateTime(a.published_at ?? undefined);
   const fetched = formatDateTime(a.last_fetched_at);
-  const versions =
-    a.content_version_count > 1 ? (
-      <span className="badge">{a.content_version_count} ver</span>
-    ) : null;
   const rx = a.telegram_reactions ?? [];
   const tagAccent = feedTags[0]?.color ?? DEFAULT_TAG_COLOR;
 
@@ -696,18 +958,25 @@ function ArticleRow({
           : undefined
       }
     >
-      <div>
-        <Link to={`/articles/${a.id}`}>{a.title || '(no title)'}</Link>
-        {versions}
+      <div className="article-row-title-row">
+        <Link className="article-row-title-link" to={`/articles/${a.id}`}>
+          {a.title || '(no title)'}
+        </Link>
+        <ArticleVersionPill count={a.content_version_count} />
       </div>
+      {feedName ? (
+        <p className="article-row-source">
+          <span className="article-row-source__label">Source</span>
+          <span className="article-row-source__name">{feedName}</span>
+        </p>
+      ) : null}
       <ArticleTagChips tags={feedTags} className="feed-card-tag-chips article-row-tag-chips" />
       {rx.length > 0 ? (
         <div className="article-row-reactions">
           <TelegramReactionsStrip articleId={a.id} reactions={rx} />
         </div>
       ) : null}
-      <div className="meta">
-        {feedName && <span>{feedName}</span>}
+      <div className="meta article-row-meta--dates">
         <span title={published.title}>{published.display}</span>
         <span title={fetched.title}>Fetched {fetched.display}</span>
       </div>

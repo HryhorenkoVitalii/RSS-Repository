@@ -17,10 +17,11 @@ import {
   isFullPageArchiveBody,
   type ArticleContentVersion,
   type ArticleDetailResponse,
+  type ArticleFeedPreview,
 } from '../api';
 import { NotFoundPage } from './NotFoundPage';
 import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
-import { formatDateTime } from '../formatTime';
+import { formatDateTime, formatDateTimeCompact } from '../formatTime';
 import { markChangedBlocks } from '../articleBlockMarkers';
 import {
   htmlToPlainText,
@@ -29,11 +30,22 @@ import {
   type DiffTooltips,
 } from '../versionDiff';
 
+function articleFeedLabel(feed: ArticleFeedPreview): string {
+  const t = feed.title?.trim();
+  if (t) return t;
+  try {
+    return new URL(feed.url).hostname.replace(/^www\./, '');
+  } catch {
+    return feed.url;
+  }
+}
+
 export function ArticlePage() {
   const { id } = useParams();
   const numId = Number(id);
   const [data, setData] = useState<ArticleDetailResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [diffModalOpen, setDiffModalOpen] = useState(false);
 
   useEffect(() => {
     if (!Number.isFinite(numId)) {
@@ -74,7 +86,7 @@ export function ArticlePage() {
     return <p className="muted">Loading…</p>;
   }
 
-  const { article, versions } = data;
+  const { article, versions, feed } = data;
   const latestVersion = versions.length > 0 ? versions[versions.length - 1] : null;
   const displayTitle =
     (latestVersion?.title ?? article.title ?? '').trim() || '(no title)';
@@ -94,13 +106,16 @@ export function ArticlePage() {
     </a>
   ) : null;
 
+  const publishedCompact = formatDateTimeCompact(article.published_at ?? undefined);
+  const hasPublished = publishedCompact.display !== '—';
+
   return (
     <>
       <Link to="/" className="back-link">
         ← Back to articles
       </Link>
       <div className="card article">
-        <h1 className="card-title">{displayTitle}</h1>
+        <h1 className="article-page-title">{displayTitle}</h1>
         {telegramRx.length > 0 ? (
           <div className="article-telegram-reactions">
             <TelegramReactionsStrip articleId={article.id} reactions={telegramRx} />
@@ -111,29 +126,99 @@ export function ArticlePage() {
             <span className="article-source-open">{link}</span>
           </div>
         ) : null}
-        <div className="meta">
-          <span>
-            Published: {formatDateTime(article.published_at ?? undefined).display}
-          </span>
-          <span>First seen: {formatDateTime(article.first_seen_at).display}</span>
-          <span>Last fetch: {formatDateTime(article.last_fetched_at).display}</span>
-          <span>
-            {versions.length > 1
-              ? `${versions.length} versions stored — latest shown below`
-              : `Versions stored: ${versions.length}`}
-          </span>
+        <div
+          className="article-meta-strip"
+          role="group"
+          aria-label="Article metadata"
+        >
+          <div className="article-meta-strip-text">
+            {feed ? (
+              <span className="article-meta-source" title={feed.url}>
+                {articleFeedLabel(feed)}
+              </span>
+            ) : null}
+            {feed && hasPublished ? (
+              <span className="article-meta-dot" aria-hidden>
+                ·
+              </span>
+            ) : null}
+            {hasPublished ? (
+              <time
+                className="article-meta-published"
+                dateTime={article.published_at ?? undefined}
+                title={publishedCompact.title}
+              >
+                <span className="visually-hidden">Published </span>
+                {publishedCompact.display}
+              </time>
+            ) : !feed ? (
+              <span className="article-meta-muted">No publication date</span>
+            ) : null}
+          </div>
+          {versions.length > 1 ? (
+            <button
+              type="button"
+              className="article-meta-versions-btn"
+              onClick={() => setDiffModalOpen(true)}
+              title="Compare saved versions (word-level diff)"
+              aria-label={`Compare ${versions.length} saved versions`}
+            >
+              <span className="article-meta-versions-btn__count">{versions.length}</span>
+              <span className="article-meta-versions-btn__label">versions</span>
+              <svg
+                className="article-meta-versions-btn__icon"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          ) : null}
         </div>
 
         <div className="article-body-unified">
-          <LatestArticleBody articleId={article.id} versions={versions} />
+          <LatestArticleBody
+            articleId={article.id}
+            versions={versions}
+            diffModalOpen={diffModalOpen}
+            onOpenDiffModal={() => setDiffModalOpen(true)}
+            onCloseDiffModal={() => setDiffModalOpen(false)}
+          />
         </div>
       </div>
     </>
   );
 }
 
+/** YouTube MRSS often embeds googlevideo URLs in &lt;video&gt;; they never play natively (legacy bodies in DB). */
+function stripGooglevideoVideoTags(html: string): string {
+  if (!html.includes('googlevideo')) return html;
+  try {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll('video').forEach((el) => {
+      const v = el as HTMLVideoElement;
+      const direct = (v.getAttribute('src') || '').toLowerCase().includes('googlevideo.com');
+      const fromSource = Array.from(v.querySelectorAll('source')).some((s) =>
+        (s.getAttribute('src') || '').toLowerCase().includes('googlevideo.com'),
+      );
+      if (direct || fromSource) v.remove();
+    });
+    return tpl.innerHTML;
+  } catch {
+    return html;
+  }
+}
+
 const domPurifyArticle = (html: string) =>
-  DOMPurify.sanitize(html, {
+  DOMPurify.sanitize(stripGooglevideoVideoTags(html), {
     ADD_TAGS: ['video', 'source', 'audio', 'iframe'],
     ADD_ATTR: ['controls', 'preload', 'src', 'type', 'style', 'alt', 'poster', 'allowfullscreen'],
   });
@@ -243,9 +328,14 @@ function ArticleVersionDiffModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="article-diff-modal-head">
-          <h2 id="article-diff-modal-title" className="article-diff-modal-title">
-            Text changes (word diff)
-          </h2>
+          <div>
+            <h2 id="article-diff-modal-title" className="article-diff-modal-title">
+              Version comparison
+            </h2>
+            <p className="article-diff-modal-sub muted small">
+              Word-level diff of plain text (formatting may differ).
+            </p>
+          </div>
           <button
             type="button"
             className="article-diff-modal-close"
@@ -255,36 +345,45 @@ function ArticleVersionDiffModal({
             ×
           </button>
         </div>
+        <div className="article-diff-legend" aria-hidden>
+          <span className="article-diff-legend-item article-diff-legend-item--add">Added</span>
+          <span className="article-diff-legend-item article-diff-legend-item--del">Removed</span>
+        </div>
         {versions.length > 2 ? (
           <div className="article-diff-modal-step">
-            <label htmlFor="article-diff-step">Version step</label>
+            <label htmlFor="article-diff-step">Transition</label>
             <select
               id="article-diff-step"
+              className="article-diff-modal-select"
               value={transitionIdx}
               onChange={(e) => setTransitionIdx(Number(e.target.value))}
             >
               {Array.from({ length: versions.length - 1 }, (_, i) => (
                 <option key={i} value={i}>
-                  Step {i + 1}: {formatDateTime(versions[i].fetched_at).display} →{' '}
+                  {i + 1}. {formatDateTime(versions[i].fetched_at).display} →{' '}
                   {formatDateTime(versions[i + 1].fetched_at).display}
                 </option>
               ))}
             </select>
           </div>
         ) : (
-          <p className="muted small" style={{ margin: '0 0 0.65rem' }}>
-            {fromTime.display} → {toTime.display}
+          <p className="article-diff-modal-range muted small">
+            <time dateTime={fromV.fetched_at}>{fromTime.display}</time>
+            <span className="article-diff-modal-range-arrow" aria-hidden>
+              →
+            </span>
+            <time dateTime={toV.fetched_at}>{toTime.display}</time>
           </p>
         )}
         {fromFull || toFull ? (
-          <p className="muted small">
-            Full-page HTML snapshots cannot be compared as plain text for this step.
+          <p className="article-diff-modal-empty muted small">
+            Full-page HTML archives can’t be compared as plain text for this step.
           </p>
         ) : (
           <>
             {titleDiffHtml ? (
               <p
-                className="diff-title-line diff-title-wrap small"
+                className="diff-title-line diff-title-wrap article-diff-modal-title-diff"
                 dangerouslySetInnerHTML={{ __html: titleDiffHtml }}
               />
             ) : null}
@@ -294,8 +393,8 @@ function ArticleVersionDiffModal({
                 dangerouslySetInnerHTML={{ __html: bodyDiffHtml }}
               />
             ) : (
-              <p className="muted small">
-                No plain-text changes in this step (only formatting may differ).
+              <p className="article-diff-modal-empty muted small">
+                No text changes in this step — update may be images or layout only.
               </p>
             )}
           </>
@@ -309,12 +408,16 @@ function ArticleVersionDiffModal({
 function LatestArticleBody({
   articleId,
   versions,
+  diffModalOpen,
+  onOpenDiffModal,
+  onCloseDiffModal,
 }: {
   articleId: number;
   versions: ArticleContentVersion[];
+  diffModalOpen: boolean;
+  onOpenDiffModal: () => void;
+  onCloseDiffModal: () => void;
 }) {
-  const [diffModalOpen, setDiffModalOpen] = useState(false);
-
   if (versions.length === 0) {
     return <p className="muted">No saved content versions.</p>;
   }
@@ -347,10 +450,10 @@ function LatestArticleBody({
       if (el.closest('a, button, input, textarea, select, label')) return;
       if (el.closest('.diff-block-changed, .diff-body-changed')) {
         e.preventDefault();
-        setDiffModalOpen(true);
+        onOpenDiffModal();
       }
     },
-    [canPlainDiffModal],
+    [canPlainDiffModal, onOpenDiffModal],
   );
 
   const lastTransitionIndex = Math.max(0, versions.length - 2);
@@ -389,32 +492,8 @@ function LatestArticleBody({
       </p>
     ) : null;
 
-  const explainNote =
-    versions.length > 1 && prev != null && !currFull && !prevFull ? (
-      <p className="article-body-latest-note muted small">
-        Latest text keeps original formatting. Yellow highlights mark blocks that changed since the
-        previous save ({prevFetched!.display}). Click a highlight or “Open text diff” for red/green
-        word comparison; multiple updates use steps below. Saved {latestFetched.display}.
-      </p>
-    ) : versions.length > 1 && prev != null && (currFull || prevFull) ? (
-      <p className="article-body-latest-note muted small">
-        Latest version ({latestFetched.display}). Full-page HTML archives are not diffed
-        side-by-side here.
-      </p>
-    ) : null;
-
   return (
     <>
-      {explainNote}
-      {canPlainDiffModal ? (
-        <button
-          type="button"
-          className="article-diff-modal-open-link"
-          onClick={() => setDiffModalOpen(true)}
-        >
-          Open text diff (red/green, all steps)
-        </button>
-      ) : null}
       {titleBlock}
       {archiveNote}
       {currFull ? (
@@ -433,12 +512,17 @@ function LatestArticleBody({
         <div
           className={canPlainDiffModal ? 'body article-body--diff-clickable' : 'body'}
           onClick={canPlainDiffModal ? handleMarkedBlockClick : undefined}
+          title={
+            canPlainDiffModal
+              ? 'Highlighted sections differ from the previous version — click to open comparison.'
+              : undefined
+          }
           dangerouslySetInnerHTML={{ __html: bodyHtml }}
         />
       )}
       <ArticleVersionDiffModal
         open={diffModalOpen}
-        onClose={() => setDiffModalOpen(false)}
+        onClose={onCloseDiffModal}
         versions={versions}
         initialTransitionIndex={lastTransitionIndex}
       />

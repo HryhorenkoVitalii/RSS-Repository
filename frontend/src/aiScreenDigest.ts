@@ -1,4 +1,4 @@
-import type { Article, Feed } from './api';
+import type { Article, Feed, Tag } from './api';
 import { htmlToPlainText } from './versionDiff';
 
 const ARTICLE_EXCERPT = 450;
@@ -72,6 +72,121 @@ export function formatFeedsPageForAi(params: {
     lines.push('');
   });
   return lines.join('\n').trim();
+}
+
+/** Human-readable filter description for LLM prompts (Markdown list lines). */
+export function describeArticleFiltersForPrompt(params: {
+  feedIds: string[];
+  tagIds: string[];
+  modifiedOnly: boolean;
+  dateFrom: string;
+  dateTo: string;
+  feeds: Feed[];
+  tags: Tag[];
+}): string {
+  const lines: string[] = [];
+
+  if (params.feedIds.length === 0) {
+    lines.push(
+      '- **Ленты:** без ограничения (учитываются все ленты при прочих условиях).',
+    );
+  } else {
+    const labels = params.feedIds.map((id) => {
+      const f = params.feeds.find((x) => String(x.id) === id);
+      return f ? (f.title?.trim() || f.url) : `feed id ${id}`;
+    });
+    lines.push(`- **Ленты (логика ИЛИ):** ${labels.join('; ')}`);
+  }
+
+  if (params.tagIds.length === 0) {
+    lines.push('- **Теги:** не участвуют в отборе.');
+  } else {
+    const labels = params.tagIds.map((id) => {
+      const t = params.tags.find((x) => String(x.id) === id);
+      return t ? t.name : `tag id ${id}`;
+    });
+    lines.push(
+      `- **Теги (ИЛИ — подходит, если у ленты статьи есть любой из тегов):** ${labels.join('; ')}`,
+    );
+  }
+
+  lines.push(
+    `- **Только изменённые:** ${params.modifiedOnly ? 'да (несколько версий текста)' : 'нет'}.`,
+  );
+
+  if (params.dateFrom || params.dateTo) {
+    lines.push(
+      `- **Дата публикации:** ${params.dateFrom || '…'} … ${params.dateTo || '…'}`,
+    );
+  } else {
+    lines.push('- **Дата публикации:** без ограничения.');
+  }
+
+  return lines.join('\n');
+}
+
+const ANALYSIS_EXCERPT = 550;
+
+/** Full prompt: task + filters + all articles in structured form (for external LLM). */
+export function buildNewsAnalysisPrompt(params: {
+  articles: Article[];
+  feedTitle: (feedId: number) => string | undefined;
+  filterBlock: string;
+  totalMatching: number;
+  maxIncluded: number;
+}): string {
+  const { articles, feedTitle, filterBlock, totalMatching, maxIncluded } = params;
+
+  const truncated =
+    articles.length > 0 && articles.length < totalMatching;
+
+  let inclusionNote: string;
+  if (articles.length === 0) {
+    inclusionNote =
+      'В промпт **не попало ни одной статьи** (выборка по фильтрам пустая).';
+  } else if (truncated) {
+    inclusionNote = `В промпт включены **${articles.length}** записей (лимит до ${maxIncluded} для размера; в базе совпадений больше).`;
+  } else {
+    inclusionNote = `В промпт включены **все ${articles.length}** подходящих записей.`;
+  }
+
+  const headParts = [
+    '# Задача для языковой модели',
+    '',
+    'Ты помогаешь пользователю RSS-агрегатора. Ниже — **выборка новостей** с явным описанием фильтров.',
+    'Проанализируй материалы: основные темы и события, противоречия или пробелы, общий тон (если уместно), затем дай **3–5 тезисов «что важно»** и что имеет смысл отследить дальше.',
+    'Если данных мало — так и скажи. Отвечай на **русском**, со структурой (заголовки, списки).',
+    '',
+    '## Условия отбора (как в интерфейсе)',
+    '',
+    filterBlock,
+    '',
+    `- Всего записей в базе по этим фильтрам: **${totalMatching}**.`,
+    `- ${inclusionNote}`,
+    '',
+    '## Статьи для анализа',
+    '',
+  ];
+
+  if (articles.length === 0) {
+    return [...headParts, '_Подходящих статей нет._'].join('\n');
+  }
+
+  const chunks: string[] = [];
+  articles.forEach((a, i) => {
+    const feed = feedTitle(a.feed_id) ?? `feed_id=${a.feed_id}`;
+    const snippet = truncatePlain(htmlToPlainText(a.body ?? ''), ANALYSIS_EXCERPT);
+    chunks.push(`### ${i + 1}. internal_id=${a.id}`);
+    chunks.push(`- **Источник:** ${feed}`);
+    chunks.push(`- **Заголовок:** ${a.title?.trim() || '(без заголовка)'}`);
+    if (a.link?.trim()) chunks.push(`- **Ссылка:** ${a.link.trim()}`);
+    if (a.published_at)
+      chunks.push(`- **Опубликовано (как в данных):** ${a.published_at}`);
+    chunks.push(`- **Фрагмент текста (из кэша):** ${snippet || '—'}`);
+    chunks.push('');
+  });
+
+  return [...headParts, ...chunks].join('\n').trim();
 }
 
 export function formatArticleDetailForAi(article: Article, feedTitle?: string): string {

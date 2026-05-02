@@ -3,6 +3,21 @@ function normalizeWs(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+/** Fingerprint embedded media (URLs) so image/video-only edits still highlight. */
+function mediaFingerprint(root: Element): string {
+  const parts: string[] = [];
+  root.querySelectorAll('img, video, audio, source').forEach((node) => {
+    const tag = node.tagName.toLowerCase();
+    const src = node.getAttribute('src') ?? '';
+    const dataSrc = node.getAttribute('data-src') ?? '';
+    const poster = tag === 'video' ? (node.getAttribute('poster') ?? '') : '';
+    const ss = node.getAttribute('srcset') ?? '';
+    parts.push(`${tag}|${src}|${dataSrc}|${poster}|${ss}`);
+  });
+  parts.sort();
+  return parts.join('\u0001');
+}
+
 /**
  * Compare previous vs latest article HTML and add `diff-block-changed` on latest elements
  * whose text differs from the aligned block in the previous snapshot.
@@ -21,7 +36,9 @@ export function markChangedBlocks(prevHtml: string, latestHtml: string): string 
   if (latestBlocks.length === 0) {
     const pt = normalizeWs(prevDoc.body.textContent || '');
     const lt = normalizeWs(latestDoc.body.textContent || '');
-    if (pt !== lt && lt.length > 0) {
+    const pm = mediaFingerprint(prevDoc.body);
+    const lm = mediaFingerprint(latestDoc.body);
+    if (pm !== lm || (pt !== lt && lt.length > 0)) {
       const wrap = latestDoc.createElement('div');
       wrap.className = 'diff-body-changed';
       while (latestDoc.body.firstChild) {
@@ -36,7 +53,10 @@ export function markChangedBlocks(prevHtml: string, latestHtml: string): string 
     const prevText =
       i < prevBlocks.length ? normalizeWs(prevBlocks[i].textContent || '') : '';
     const latestText = normalizeWs(latestBlocks[i].textContent || '');
-    if (prevText !== latestText) {
+    const prevMedia =
+      i < prevBlocks.length ? mediaFingerprint(prevBlocks[i]) : '';
+    const latestMedia = mediaFingerprint(latestBlocks[i]);
+    if (prevText !== latestText || prevMedia !== latestMedia) {
       latestBlocks[i].classList.add('diff-block-changed');
     }
   }

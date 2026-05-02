@@ -80,15 +80,18 @@ function TagAdminRow({
     setName(tag.name);
     setColor(tag.color || DEFAULT_TAG_COLOR);
   }, [tag.id, tag.name, tag.color]);
-  const dirty =
-    name.trim() !== tag.name || color !== (tag.color || DEFAULT_TAG_COLOR);
   return (
     <li className="tags-admin-row">
       <input
         type="color"
         className="tag-row-color"
         value={color}
-        onChange={(e) => setColor(e.target.value)}
+        onChange={(e) => {
+          const next = e.target.value;
+          setColor(next);
+          const n = name.trim() || tag.name;
+          if (n) onSave(n, next);
+        }}
         aria-label={`Color for ${tag.name}`}
         title="Color"
       />
@@ -97,19 +100,16 @@ function TagAdminRow({
         className="tag-row-name"
         value={name}
         onChange={(e) => setName(e.target.value)}
+        onBlur={() => {
+          const n = name.trim();
+          if (!n || n === tag.name) return;
+          onSave(n, color);
+        }}
         maxLength={64}
         spellCheck={false}
         aria-label="Tag name"
       />
       <div className="tags-admin-row-actions">
-        <button
-          type="button"
-          className="btn-secondary btn-compact"
-          disabled={busy || !dirty || !name.trim()}
-          onClick={() => onSave(name.trim(), color)}
-        >
-          Save
-        </button>
         <button type="button" className="btn-ghost btn-compact" disabled={busy} onClick={onDelete}>
           Delete
         </button>
@@ -510,6 +510,7 @@ function FeedCard({
   const [tagSel, setTagSel] = useState<number[]>(() =>
     (feed.tags ?? []).map((t) => t.id),
   );
+  const tgSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTelegram = isTelegramFeedUrl(feed.url);
   useEffect(() => {
     setSec(snapToNearestPreset(feed.poll_interval_seconds));
@@ -520,6 +521,11 @@ function FeedCard({
   useEffect(() => {
     setTagSel((feed.tags ?? []).map((t) => t.id));
   }, [feed.id, feed.tags]);
+  useEffect(() => {
+    return () => {
+      if (tgSaveTimerRef.current) clearTimeout(tgSaveTimerRef.current);
+    };
+  }, []);
   const title = feed.title?.trim() || '';
   const polled = formatDateTime(feed.last_polled_at ?? undefined);
 
@@ -547,6 +553,28 @@ function FeedCard({
     ) : pollStatus === 'error' ? (
       <span className="poll-badge poll-badge--error">Error</span>
     ) : null;
+
+  const flushTelegramSave = useCallback(
+    (value: number) => {
+      if (tgSaveTimerRef.current) {
+        clearTimeout(tgSaveTimerRef.current);
+        tgSaveTimerRef.current = null;
+      }
+      onSaveTelegramMax(value);
+    },
+    [onSaveTelegramMax],
+  );
+
+  const scheduleTelegramSave = useCallback(
+    (value: number) => {
+      if (tgSaveTimerRef.current) clearTimeout(tgSaveTimerRef.current);
+      tgSaveTimerRef.current = setTimeout(() => {
+        tgSaveTimerRef.current = null;
+        onSaveTelegramMax(value);
+      }, 450);
+    },
+    [onSaveTelegramMax],
+  );
 
   const cardClass =
     'feed-card' +
@@ -622,30 +650,29 @@ function FeedCard({
                 max={TELEGRAM_POSTS_MAX}
                 step={1}
                 value={tgMax}
-                onChange={(e) => setTgMax(clampTelegramMaxItems(Number(e.target.value)))}
+                onChange={(e) => {
+                  const v = clampTelegramMaxItems(Number(e.target.value));
+                  setTgMax(v);
+                  scheduleTelegramSave(v);
+                }}
+                onBlur={(e) => {
+                  const v = clampTelegramMaxItems(Number(e.target.value));
+                  setTgMax(v);
+                  flushTelegramSave(v);
+                }}
                 disabled={disabled}
                 aria-label="Max Telegram posts per poll"
               />
-              <button
-                type="button"
-                className="btn-secondary btn-compact"
-                disabled={disabled}
-                onClick={() => onSaveTelegramMax(tgMax)}
-              >
-                Save
-              </button>
             </div>
           ) : null}
           <div className="inline-form">
-            <IntervalSelect value={sec} onChange={setSec} />
-            <button
-              type="button"
-              className="btn-secondary btn-compact"
-              disabled={disabled}
-              onClick={() => onSaveInterval(sec)}
-            >
-              Save
-            </button>
+            <IntervalSelect
+              value={sec}
+              onChange={(v) => {
+                setSec(v);
+                onSaveInterval(v);
+              }}
+            />
           </div>
           <button
             type="button"
@@ -688,9 +715,14 @@ function FeedCard({
                   checked={tagSel.includes(t.id)}
                   disabled={disabled}
                   onChange={() => {
-                    setTagSel((prev) =>
-                      prev.includes(t.id) ? prev.filter((x) => x !== t.id) : [...prev, t.id],
-                    );
+                    const next = tagSel.includes(t.id)
+                      ? tagSel.filter((x) => x !== t.id)
+                      : [...tagSel, t.id];
+                    setTagSel(next);
+                    runTrackedAction(async () => {
+                      await putFeedTags(feed.id, next);
+                      onTagsUpdated();
+                    });
                   }}
                 />
                 <span
@@ -701,19 +733,6 @@ function FeedCard({
                 {t.name}
               </label>
             ))}
-            <button
-              type="button"
-              className="btn-secondary btn-compact"
-              disabled={disabled}
-              onClick={() =>
-                runTrackedAction(async () => {
-                  await putFeedTags(feed.id, tagSel);
-                  onTagsUpdated();
-                })
-              }
-            >
-              Save tags
-            </button>
           </>
         )}
       </div>

@@ -465,11 +465,29 @@ export async function listArticles(
   return normalizeArticles(raw);
 }
 
+export type ArticleFeedPreview = {
+  id: number;
+  url: string;
+  /** Feed title when set; UI may fall back to hostname. */
+  title: string | null;
+};
+
 export type ArticleDetailResponse = {
   article: Article;
   versions: ArticleContentVersion[];
   telegram_reactions?: ArticleTelegramReaction[];
+  feed?: ArticleFeedPreview | null;
 };
+
+function coerceArticleFeedPreview(raw: unknown): ArticleFeedPreview | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  const id = Number(r.id);
+  const url = typeof r.url === 'string' ? r.url : '';
+  if (!Number.isFinite(id) || !url) return undefined;
+  const title = r.title == null ? null : String(r.title);
+  return { id, url, title };
+}
 
 export async function getArticle(id: number): Promise<ArticleDetailResponse> {
   const raw = await apiGet<unknown>(`/articles/${id}`);
@@ -479,7 +497,13 @@ export async function getArticle(id: number): Promise<ArticleDetailResponse> {
     ? (o.versions as ArticleContentVersion[])
     : [];
   const telegram_reactions = coerceTelegramReactions(o.telegram_reactions);
-  return { article, versions, ...(telegram_reactions ? { telegram_reactions } : {}) };
+  const feed = coerceArticleFeedPreview(o.feed);
+  return {
+    article,
+    versions,
+    ...(telegram_reactions ? { telegram_reactions } : {}),
+    ...(feed ? { feed } : {}),
+  };
 }
 
 /** Blob URL for `text/html`; caller must `URL.revokeObjectURL` when done. */
