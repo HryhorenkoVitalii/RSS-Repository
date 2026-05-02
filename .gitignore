@@ -8,7 +8,7 @@ frontend/*.tsbuildinfo
 rss_repository.db
 rss_repository.db-*
 
-# SQLite при запуске контейнера через scripts/podman-run.sh (bind mount ./data)
+# Локальный каталог data (если когда-то монтировали вручную)
 /data
 
 # Локальная БД при dev из корня репозитория (DATABASE_URL=sqlite:.cursor_dev.db)

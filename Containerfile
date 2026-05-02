@@ -38,5 +38,5 @@ ENV RUST_LOG=info,rss_repository=info
 EXPOSE 8080
 VOLUME /data
 
-USER www-data
+# entrypoint.sh стартует от root, mkdir/chown /data, затем runuser → www-data
 ENTRYPOINT ["/entrypoint.sh"]

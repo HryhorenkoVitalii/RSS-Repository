@@ -12,13 +12,10 @@
 # Логи:   compose logs -f app
 # Стоп:   compose down   (в каталоге репозитория)
 #
-# SELinux (Podman): задайте в .env строку вида HOST_DATA_DIR=/var/lib/rss:Z (суффикс :Z — см. документацию Podman).
+# Медиа хранятся в именованном томе app_media (см. compose.yaml), не в ./data на хосте.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-
-export HOST_DATA_DIR="${HOST_DATA_DIR:-$ROOT/data}"
-mkdir -p "$HOST_DATA_DIR/media" || true
 
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/compose.yaml}"
 
