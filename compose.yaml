@@ -39,9 +39,8 @@ services:
       DATABASE_URL: mysql://${MARIADB_USER:-rss}:${MARIADB_PASSWORD:-rss_dev_change_me}@db:3306/${MARIADB_DATABASE:-rss_repository}
       MEDIA_DIR: /data/media
     volumes:
-      # Именованный том (не bind на хост): медиа только внутри storage Podman/Docker.
-      - app_media:/data
+      # Bind mount на хост: медиа сохраняется локально в ./data/media
+      - ./data:/data
 
 volumes:
   mariadb_data:
-  app_media:

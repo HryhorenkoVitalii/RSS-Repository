@@ -4,7 +4,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{
-    self, Article, ArticleFilter, ArticleListQuery, ArticleReactionSnapshot,
+    self, parse_article_search_query, Article, ArticleFilter, ArticleListQuery,
+    ArticleReactionSnapshot,
 };
 use crate::error::AppError;
 
@@ -12,6 +13,8 @@ use crate::routes::AppState;
 
 const MAX_FEED_IDS: usize = 50;
 const MAX_TAG_IDS: usize = 50;
+const DEFAULT_ARTICLE_LIST_LIMIT: i64 = 50;
+const MAX_ARTICLE_LIST_LIMIT: i64 = 100;
 
 #[derive(Deserialize, Default)]
 pub(crate) struct ArticlesQuery {
@@ -22,6 +25,10 @@ pub(crate) struct ArticlesQuery {
     pub page: Option<i64>,
     pub date_from: Option<String>,
     pub date_to: Option<String>,
+    /// Search in latest title/body: substrings AND'd; separate with spaces or commas; `"phrase"` = one token.
+    pub q: Option<String>,
+    /// Page size (default 50, max 100).
+    pub limit: Option<i64>,
 }
 
 fn parse_date_from_day(s: &str) -> Result<Option<DateTime<Utc>>, AppError> {
@@ -109,12 +116,14 @@ fn article_filter_from_query(q: &ArticlesQuery) -> Result<ArticleFilter, AppErro
             ));
         }
     }
+    let search_tokens = parse_article_search_query(q.q.as_deref())?;
     Ok(ArticleFilter {
         feed_ids,
         tag_ids,
         only_modified,
         last_fetched_from,
         last_fetched_before,
+        search_tokens,
     })
 }
 
@@ -122,7 +131,10 @@ pub(crate) async fn list_articles(
     State(state): State<AppState>,
     Query(q): Query<ArticlesQuery>,
 ) -> Result<Json<ArticlesResponse>, AppError> {
-    let limit = 50;
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_ARTICLE_LIST_LIMIT)
+        .clamp(1, MAX_ARTICLE_LIST_LIMIT);
     let page = q.page.unwrap_or(0).max(0);
     let offset = page * limit;
     let filter = article_filter_from_query(&q)?;

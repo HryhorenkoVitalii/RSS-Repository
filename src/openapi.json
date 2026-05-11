@@ -98,7 +98,7 @@
       "delete": { "summary": "Delete tag", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
     },
     "/api/articles": {
-      "get": { "summary": "List articles", "description": "Query: feed_id, tag_id (comma ids — feeds having any tag), modified_only, page, date_from, date_to" }
+      "get": { "summary": "List articles", "description": "Query: feed_id, tag_id (comma ids — feeds having any tag), modified_only, page, limit (1–100, default 50), date_from, date_to, q (substring AND in latest title/body; separate with spaces or commas; double-quoted segment is one token)" }
     },
     "/api/articles/{id}": {
       "get": { "summary": "Article detail + versions", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }] }
@@ -126,7 +126,7 @@
       }
     },
     "/feed.xml": {
-      "get": { "summary": "RSS 2.0 export", "description": "Not under /api; same host. Query: feed_id, tag_id, modified_only, date_from, date_to, refresh." }
+      "get": { "summary": "RSS 2.0 export", "description": "Not under /api; same host. Query: feed_id, tag_id, modified_only, date_from, date_to, q (same as articles list), refresh." }
     }
   }
 }

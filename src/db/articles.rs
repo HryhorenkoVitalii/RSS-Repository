@@ -9,6 +9,7 @@ use crate::error::AppError;
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Article {
     pub id: i64,
+    pub uuid: String,
     pub feed_id: i64,
     pub guid: String,
     pub title: String,
@@ -45,7 +46,7 @@ pub struct ArticleContentVersion {
 }
 
 const ARTICLE_SELECT: &str = r#"
-SELECT CAST(a.id AS SIGNED) AS id, CAST(a.feed_id AS SIGNED) AS feed_id, a.guid,
+SELECT CAST(a.id AS SIGNED) AS id, a.uuid, CAST(a.feed_id AS SIGNED) AS feed_id, a.guid,
   cur.title AS title, cur.body AS body,
   a.published_at, a.first_seen_at, a.last_fetched_at,
   COALESCE(
@@ -195,11 +196,13 @@ pub async fn upsert_article(
 
     let article_id = match existing {
         None => {
+            let uuid = uuid::Uuid::now_v7().to_string();
             sqlx::query(
                 r#"INSERT INTO articles (
-                    feed_id, guid, published_at, first_seen_at, last_fetched_at
-                ) VALUES (?, ?, ?, ?, ?)"#,
+                    uuid, feed_id, guid, published_at, first_seen_at, last_fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?)"#,
             )
+            .bind(uuid)
             .bind(row.feed_id)
             .bind(row.guid)
             .bind(row.published_at)
@@ -331,6 +334,82 @@ pub struct ArticleFilter {
     pub only_modified: bool,
     pub last_fetched_from: Option<DateTime<Utc>>,
     pub last_fetched_before: Option<DateTime<Utc>>,
+    /// Each token is AND'd: substring match in latest title or body (`LIKE %…%`, MySQL default escape).
+    pub search_tokens: Vec<String>,
+}
+
+/// Escape `\`, `%`, `_` for MySQL `LIKE` with default backslash escape.
+fn escape_mysql_like(value: &str) -> String {
+    let mut s = String::with_capacity(value.len() + 8);
+    for ch in value.chars() {
+        match ch {
+            '\\' => s.push_str("\\\\"),
+            '%' => s.push_str("\\%"),
+            '_' => s.push_str("\\_"),
+            _ => s.push(ch),
+        }
+    }
+    s
+}
+
+const MAX_SEARCH_RAW_LEN: usize = 420;
+const MAX_SEARCH_TOKENS: usize = 24;
+const MAX_SEARCH_TOKEN_CHARS: usize = 128;
+
+/// `q` from query string: each token must appear as a substring in latest title or body (AND).
+/// Tokens are separated by ASCII whitespace or `,`. A segment in `"double quotes"` is one token;
+/// quotes may appear anywhere, e.g. `"two words" rust` → two tokens.
+pub fn parse_article_search_query(raw: Option<&str>) -> Result<Vec<String>, AppError> {
+    let s = raw.unwrap_or("").trim();
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    if s.len() > MAX_SEARCH_RAW_LEN {
+        return Err(AppError::BadRequest(format!(
+            "q: maximum length is {MAX_SEARCH_RAW_LEN} characters"
+        )));
+    }
+    fn is_sep(b: u8) -> bool {
+        b.is_ascii_whitespace() || b == b','
+    }
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    let mut tokens: Vec<String> = Vec::new();
+    while i < bytes.len() {
+        while i < bytes.len() && is_sep(bytes[i]) {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b'"' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+            let inner = s.get(start..i).unwrap_or("").trim();
+            if !inner.is_empty() {
+                tokens.push(inner.chars().take(MAX_SEARCH_TOKEN_CHARS).collect());
+            }
+            if i < bytes.len() && bytes[i] == b'"' {
+                i += 1;
+            }
+        } else {
+            let start = i;
+            while i < bytes.len() && !is_sep(bytes[i]) && bytes[i] != b'"' {
+                i += 1;
+            }
+            let t = s.get(start..i).unwrap_or("").trim();
+            if !t.is_empty() {
+                tokens.push(t.chars().take(MAX_SEARCH_TOKEN_CHARS).collect());
+            }
+        }
+        if tokens.len() >= MAX_SEARCH_TOKENS {
+            break;
+        }
+    }
+    Ok(tokens)
 }
 
 fn push_article_where(b: &mut QueryBuilder<'_, MySql>, f: &ArticleFilter) {
@@ -366,6 +445,14 @@ fn push_article_where(b: &mut QueryBuilder<'_, MySql>, f: &ArticleFilter) {
     if let Some(dt) = f.last_fetched_before {
         b.push(" AND a.last_fetched_at < ");
         b.push_bind(dt);
+    }
+    for tok in &f.search_tokens {
+        let pat = format!("%{}%", escape_mysql_like(tok));
+        b.push(" AND (cur.title LIKE ");
+        b.push_bind(pat.clone());
+        b.push(" OR cur.body LIKE ");
+        b.push_bind(pat);
+        b.push(")");
     }
 }
 
@@ -504,4 +591,69 @@ pub async fn list_article_contents(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+#[cfg(test)]
+mod search_parse_tests {
+    use super::parse_article_search_query;
+
+    #[test]
+    fn empty_and_whitespace() {
+        assert!(parse_article_search_query(None).unwrap().is_empty());
+        assert!(parse_article_search_query(Some("")).unwrap().is_empty());
+        assert!(parse_article_search_query(Some("  \t")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn words_and() {
+        assert_eq!(
+            parse_article_search_query(Some("foo bar")).unwrap(),
+            vec!["foo".to_string(), "bar".to_string()]
+        );
+    }
+
+    #[test]
+    fn comma_separates_like_space() {
+        assert_eq!(
+            parse_article_search_query(Some("foo,bar")).unwrap(),
+            vec!["foo".to_string(), "bar".to_string()]
+        );
+        assert_eq!(
+            parse_article_search_query(Some("a, b , c")).unwrap(),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn phrase_in_quotes() {
+        assert_eq!(
+            parse_article_search_query(Some("\"hello world\"")).unwrap(),
+            vec!["hello world".to_string()]
+        );
+    }
+
+    #[test]
+    fn quoted_phrase_mixed_with_keywords() {
+        assert_eq!(
+            parse_article_search_query(Some("\"hello world\" rust")).unwrap(),
+            vec!["hello world".to_string(), "rust".to_string()]
+        );
+        assert_eq!(
+            parse_article_search_query(Some("pre \"in quotes\" post")).unwrap(),
+            vec!["pre".to_string(), "in quotes".to_string(), "post".to_string()]
+        );
+    }
+
+    #[test]
+    fn unclosed_quote_takes_rest_as_phrase() {
+        assert_eq!(
+            parse_article_search_query(Some("\"hello world")).unwrap(),
+            vec!["hello world".to_string()]
+        );
+    }
+
+    #[test]
+    fn quoted_empty_yields_no_tokens() {
+        assert!(parse_article_search_query(Some("\"\"")).unwrap().is_empty());
+    }
 }
