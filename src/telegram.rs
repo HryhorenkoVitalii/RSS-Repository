@@ -19,6 +19,8 @@ use crate::rss::{validate_feed_url, FeedFetchError};
 const MAX_HTML_BYTES: usize = 10 * 1024 * 1024;
 /// Upper bound for how many Telegram preview posts we fetch per poll.
 pub const TELEGRAM_FETCH_MAX_CAP: usize = 500;
+/// Safety cap on `?before=` HTML pages (Telegram may return only a few widgets per response).
+const TELEGRAM_PREVIEW_MAX_PAGES: usize = 80;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(45);
 
 static SEL_MESSAGE: Lazy<Selector> =
@@ -506,8 +508,13 @@ pub async fn fetch_telegram_feed(
 
     let mut all: Vec<ParsedPost> = Vec::new();
     let mut page_url = base_str.clone();
+    let mut pages_fetched = 0usize;
 
     while all.len() < max_items {
+        pages_fetched += 1;
+        if pages_fetched > TELEGRAM_PREVIEW_MAX_PAGES {
+            break;
+        }
         let page_owned = page_url.clone();
         let headers = headers_for(FetchProfile::ArticleHtml, page_owned.as_str())
             .map_err(|e| FeedFetchError::Parse(format!("заголовки HTTP: {e}")))?;
@@ -528,10 +535,11 @@ pub async fn fetch_telegram_feed(
         if page_posts.is_empty() {
             break;
         }
-        let page_len = page_posts.len();
         all.extend(page_posts);
 
-        if all.len() >= max_items || page_len < 5 || oldest_id.is_none() {
+        // Do not stop just because the page is short: preview HTML often has only 3–4
+        // `tgme_widget_message` nodes while older posts are available via `?before=`.
+        if all.len() >= max_items || oldest_id.is_none() {
             break;
         }
 

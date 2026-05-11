@@ -5,6 +5,7 @@ use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
 use sqlx::MySqlPool;
 use tokio::sync::Semaphore;
+use url::Url;
 
 use crate::browser_http::{headers_for, FetchProfile};
 use crate::error::AppError;
@@ -22,10 +23,70 @@ fn media_sel() -> &'static Selector {
 /// Fingerprint a remote URL when the file was not downloaded (so the next poll can still
 /// detect a change: new URL, or different bytes after a successful download).
 pub fn remote_url_fingerprint(url: &str) -> String {
+    let url = normalize_remote_media_url(url);
     let mut h = Sha256::new();
     h.update(b"remote:");
     h.update(url.as_bytes());
     hex::encode(h.finalize())
+}
+
+fn normalize_remote_media_url(input: &str) -> String {
+    let input = input.trim();
+    let Ok(mut u) = Url::parse(input) else {
+        return input.to_string();
+    };
+    u.set_fragment(None);
+
+    let host = u.host_str().unwrap_or("").to_ascii_lowercase();
+    // YouTube CDNs often append cache-busting query params to the same image bytes.
+    if host.contains("ytimg.com") || host.contains("ggpht.com") {
+        u.set_query(None);
+        return u.to_string();
+    }
+
+    // Drop noisy tracking/cache-busting parameters so they don't create fake "content changes".
+    // Keep everything else and sort for stability.
+    let mut keep: Vec<(String, String)> = Vec::new();
+    if let Some(q) = u.query() {
+        for (k, v) in url::form_urlencoded::parse(q.as_bytes()) {
+            let k_lc = k.to_ascii_lowercase();
+            let drop = k_lc.starts_with("utm_")
+                || matches!(
+                    k_lc.as_str(),
+                    "fbclid"
+                        | "gclid"
+                        | "yclid"
+                        | "mc_cid"
+                        | "mc_eid"
+                        | "ref"
+                        | "ref_src"
+                        | "source"
+                        | "spm"
+                        | "rnd"
+                        | "cachebust"
+                        | "cache_bust"
+                        | "cb"
+                        | "t"
+                        | "ts"
+                        | "timestamp"
+                        | "time"
+                );
+            if !drop {
+                keep.push((k.into_owned(), v.into_owned()));
+            }
+        }
+    }
+    keep.sort();
+
+    if keep.is_empty() {
+        u.set_query(None);
+    } else {
+        let qs = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(keep.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .finish();
+        u.set_query(Some(&qs));
+    }
+    u.to_string()
 }
 
 pub fn media_dir() -> PathBuf {

@@ -7,7 +7,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rss::{Channel, Guid, Item};
 use serde::Deserialize;
 
-use crate::db::{self, ArticleFilter, ArticleListQuery, Feed};
+use crate::db::{self, parse_article_search_query, ArticleFilter, ArticleListQuery, Feed};
 use crate::error::AppError;
 use crate::ingest::poll_feed;
 
@@ -26,6 +26,8 @@ pub struct RssQuery {
     pub date_from: Option<String>,
     /// Inclusive end day (`YYYY-MM-DD`), UTC end of day. Filters `last_fetched_at`.
     pub date_to: Option<String>,
+    /// Search in title/body: same rules as `/api/articles?q=` (substring AND; spaces/commas; `"phrase"`).
+    pub q: Option<String>,
     /// For a single feed (`feed_id` or unique `title`): default **true** — poll source before RSS.
     /// For combined feed (no id/title): default **false**. Set `refresh=false` to skip poll.
     pub refresh: Option<String>,
@@ -124,6 +126,7 @@ pub async fn rss_feed(
 
     let last_fetched_from = q.date_from.as_deref().and_then(parse_date_from_day);
     let last_fetched_before = q.date_to.as_deref().and_then(parse_date_to_exclusive);
+    let search_tokens = parse_article_search_query(q.q.as_deref())?;
 
     let selected: Option<(i64, Feed)> = if feed_ids.len() == 1 {
         let fid = feed_ids[0];
@@ -176,6 +179,7 @@ pub async fn rss_feed(
                 only_modified,
                 last_fetched_from,
                 last_fetched_before,
+                search_tokens,
             },
             limit: RSS_PAGE_SIZE,
             offset: 0,

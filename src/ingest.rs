@@ -62,7 +62,9 @@ pub async fn poll_feed(
         let guid = article_guid(item).map_err(|e| e.to_string())?;
         let title = item.title().map(|t| t.to_string()).unwrap_or_default();
         let body = item_display_body(item);
-        let canon = plain_fingerprint(&body).map_err(|e| e.to_string())?;
+        let title_canon = plain_fingerprint(title.as_str()).map_err(|e| e.to_string())?;
+        let body_canon = plain_fingerprint(&body).map_err(|e| e.to_string())?;
+        let canon = format!("title:{title_canon}\nbody:{body_canon}");
         let published_at = item.pub_date().and_then(parse_pub_date);
 
         let media_urls = media::extract_media_urls(&body);
