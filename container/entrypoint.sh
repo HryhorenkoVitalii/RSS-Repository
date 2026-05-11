@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-# /data — том или слой образа; создаём подкаталоги и отдаём www-data (не root на время работы).
+# /data обычно примонтирован с хоста (rootless Podman): chown может быть запрещён.
+# Поэтому создаём каталоги и пробуем сменить владельца "мягко" — без падения контейнера.
 mkdir -p /data/media
-chown -R www-data:www-data /data
+
+if command -v chown >/dev/null 2>&1; then
+  if ! chown -R 33:33 /data 2>/dev/null; then
+    echo "entrypoint: WARN: cannot chown /data (likely rootless bind mount); continuing" >&2
+  fi
+fi
 
 if [ -z "${DATABASE_URL:-}" ]; then
   echo "entrypoint: задайте DATABASE_URL (MySQL/MariaDB), например mysql://user:pass@host:3306/dbname" >&2
