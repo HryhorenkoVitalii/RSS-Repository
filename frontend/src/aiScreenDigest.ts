@@ -81,6 +81,8 @@ export function describeArticleFiltersForPrompt(params: {
   modifiedOnly: boolean;
   dateFrom: string;
   dateTo: string;
+  /** Raw search string as in URL (`q`). */
+  searchQuery: string;
   feeds: Feed[];
   tags: Tag[];
 }): string {
@@ -120,6 +122,15 @@ export function describeArticleFiltersForPrompt(params: {
     );
   } else {
     lines.push('- **Дата публикации:** без ограничения.');
+  }
+
+  const sq = params.searchQuery.trim();
+  if (sq) {
+    lines.push(
+      `- **Поиск по тексту (заголовок или тело, последняя версия):** ${sq}`,
+    );
+  } else {
+    lines.push('- **Поиск по тексту:** не задан.');
   }
 
   return lines.join('\n');

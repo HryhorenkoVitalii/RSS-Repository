@@ -32,6 +32,17 @@ function backendProxy(): ProxyOptions {
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/framer-motion')) return 'framer-motion';
+          if (id.includes('node_modules/dompurify')) return 'dompurify';
+          if (id.includes('node_modules/diff/')) return 'diff';
+        },
+      },
+    },
+  },
   server: {
     host: 'localhost',
     port: 5173,

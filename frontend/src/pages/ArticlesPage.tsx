@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,11 +9,8 @@ import {
   type CSSProperties,
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import {
-  buildNewsAnalysisPrompt,
-  describeArticleFiltersForPrompt,
-  formatArticlesListForAi,
-} from '../aiScreenDigest';
+import { sanitizeArticleBodyHtml } from '../articleHtmlSanitize';
+import { formatArticlesListForAi } from '../aiScreenDigest';
 import { useAiScreenSection } from '../aiScreenContext';
 import {
   DEFAULT_TAG_COLOR,
@@ -25,9 +23,9 @@ import {
   type Tag,
 } from '../api';
 import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
-import { feedRssPath } from '../feedRss';
 import { formatDateTime } from '../formatTime';
 import { PaginationBar } from '../PaginationBar';
+import { readArticlesListCache, writeArticlesListCache } from '../articleListCache';
 import {
   clearArticleListPrefs,
   loadArticleListPrefs,
@@ -35,6 +33,10 @@ import {
   type ArticleViewModePref,
 } from '../articleListPrefs';
 import { pickTagChipTextColor } from '../tagChipText';
+import {
+  hasArticleListFilterParamsInSearch,
+  OPEN_ARTICLES_FILTERS_EVENT,
+} from '../articlesFilterUi';
 
 function parseCommaSepIds(raw: string | null): string[] {
   if (!raw) return [];
@@ -43,169 +45,17 @@ function parseCommaSepIds(raw: string | null): string[] {
 
 type ArticleViewMode = ArticleViewModePref;
 
+const FEED_SCROLL_BATCH = 5;
+const FEED_SCROLL_TRIM_PREVIOUS = 4;
+
 function parseViewMode(raw: string | null): ArticleViewMode {
-  return raw === 'tiles' ? 'tiles' : 'list';
+  if (raw === 'tiles') return 'tiles';
+  if (raw === 'feed') return 'feed';
+  return 'list';
 }
 
-const MAX_ARTICLES_IN_AI_PROMPT = 120;
-
-function AiPromptModal({
-  open,
-  onClose,
-  promptText,
-  error,
-  meta,
-  articlesCap,
-}: {
-  open: boolean;
-  onClose: () => void;
-  promptText: string;
-  error: string | null;
-  meta: { included: number; total: number } | null;
-  articlesCap: number;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (!open) setCopied(false);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || error || !promptText.trim()) return;
-    const el = textareaRef.current;
-    if (!el) return;
-    el.focus();
-    el.select();
-  }, [open, error, promptText]);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
-  const handleCopy = useCallback(async () => {
-    if (!promptText.trim() || error) return;
-    try {
-      await navigator.clipboard.writeText(promptText);
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 2600);
-    } catch {
-      window.prompt('Копирование недоступно. Выделите текст в поле ниже:', promptText);
-    }
-  }, [promptText, error]);
-
-  if (!open) return null;
-
-  return (
-    <div className="ai-prompt-modal-backdrop" role="presentation" onClick={onClose}>
-      <div
-        className="ai-prompt-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="ai-prompt-modal-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="ai-prompt-modal-head">
-          <div className="ai-prompt-modal-head-text">
-            <h2 id="ai-prompt-modal-title" className="ai-prompt-modal-title">
-              Промпт для ИИ
-            </h2>
-            {meta != null && error == null ? (
-              <p className="ai-prompt-modal-meta muted small">
-                В тексте: <strong>{meta.included}</strong> статей
-                {meta.total > meta.included
-                  ? ` (по фильтрам в базе ${meta.total}; в промпт не больше ${articlesCap})`
-                  : meta.total > 0
-                    ? ` · всего по фильтрам: ${meta.total}`
-                    : null}
-              </p>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            className="ai-prompt-modal-close"
-            onClick={onClose}
-            aria-label="Закрыть"
-          >
-            ×
-          </button>
-        </div>
-
-        {error ? (
-          <p className="ai-prompt-modal-err">{error}</p>
-        ) : (
-          <>
-            <textarea
-              ref={textareaRef}
-              className="ai-prompt-modal-textarea mono"
-              readOnly
-              value={promptText}
-              spellCheck={false}
-              aria-label="Текст промпта для языковой модели"
-            />
-            <div className="ai-prompt-modal-toolbar">
-              <button type="button" className="btn-primary" onClick={() => void handleCopy()}>
-                Копировать
-              </button>
-              {copied ? (
-                <span className="ai-prompt-modal-copied" role="status">
-                  Скопировано в буфер обмена
-                </span>
-              ) : null}
-            </div>
-          </>
-        )}
-
-        <div className="ai-prompt-modal-footer">
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            Закрыть
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-async function fetchArticlesForAnalysisPrompt(
-  base: {
-    feedIds?: string[];
-    tagIds?: string[];
-    modifiedOnly?: boolean;
-    dateFrom?: string;
-    dateTo?: string;
-  },
-  maxItems: number,
-): Promise<{ articles: Article[]; total: number }> {
-  const out: Article[] = [];
-  let total = 0;
-  let page = 0;
-  for (;;) {
-    const r = await listArticles({
-      ...base,
-      ...(page > 0 ? { page } : {}),
-    });
-    total = r.total;
-    out.push(...r.articles);
-    if (out.length >= maxItems) break;
-    if (out.length >= total) break;
-    if (r.articles.length === 0 || r.articles.length < r.limit) break;
-    page += 1;
-  }
-  return { articles: out.slice(0, maxItems), total };
-}
+/** Stable empty array so memoized rows/tiles do not re-render when a feed has no tags. */
+const EMPTY_FEED_TAGS: Tag[] = [];
 
 /** First usable image URL from stored article HTML (img src or video poster). */
 function firstImageUrlFromArticle(html: string): string | null {
@@ -238,24 +88,18 @@ function firstImageUrlFromArticle(html: string): string | null {
   return null;
 }
 
-function hasFilterParamsInSearch(sp: URLSearchParams): boolean {
-  return Boolean(
-    sp.get('feed_id') ||
-      sp.get('tag_id') ||
-      sp.get('modified_only') === 'true' ||
-      sp.get('date_from') ||
-      sp.get('date_to'),
-  );
-}
-
 export function ArticlesPage() {
   const [search, setSearch] = useSearchParams();
   const [prefsReady, setPrefsReady] = useState(false);
+  /** Merge saved list prefs into the URL only once; repeating this effect would fight user clicks (stale LS vs new URL). */
+  const articleListPrefsHydratedRef = useRef(false);
 
   useLayoutEffect(() => {
+    if (articleListPrefsHydratedRef.current) return;
+    articleListPrefsHydratedRef.current = true;
+
     const sp = new URLSearchParams(window.location.search);
-    const hasFilters = hasFilterParamsInSearch(sp);
-    const hasView = sp.has('view');
+    const hasFilters = hasArticleListFilterParamsInSearch(sp);
     const saved = loadArticleListPrefs();
 
     if (!saved) {
@@ -263,18 +107,26 @@ export function ArticlesPage() {
       return;
     }
 
-    let needMerge = false;
-    if (!hasFilters) {
-      needMerge =
-        saved.feedIds.length > 0 ||
+    const needsFilterMerge =
+      !hasFilters &&
+      (saved.feedIds.length > 0 ||
         saved.tagIds.length > 0 ||
         saved.modifiedOnly ||
         Boolean(saved.dateFrom) ||
-        Boolean(saved.dateTo);
-    }
-    if (!hasView && saved.view === 'tiles') {
-      needMerge = true;
-    }
+        Boolean(saved.dateTo));
+
+    const urlViewRaw = sp.get('view');
+    /** Не затирать явный `view` в URL; без параметра — подставить сохранённый режим (tiles/feed). */
+    const needsViewMerge =
+      urlViewRaw == null || urlViewRaw === ''
+        ? saved.view !== 'list'
+        : saved.view === 'tiles'
+          ? urlViewRaw !== 'tiles'
+          : saved.view === 'feed'
+            ? urlViewRaw !== 'feed'
+            : urlViewRaw === 'tiles' || urlViewRaw === 'feed';
+
+    const needMerge = needsFilterMerge || needsViewMerge;
 
     if (!needMerge) {
       setPrefsReady(true);
@@ -284,7 +136,7 @@ export function ArticlesPage() {
     setSearch(
       (prev) => {
         const p = new URLSearchParams(prev);
-        if (!hasFilters) {
+        if (!hasFilters && needsFilterMerge) {
           if (saved.feedIds.length > 0) p.set('feed_id', saved.feedIds.join(','));
           else p.delete('feed_id');
           if (saved.tagIds.length > 0) p.set('tag_id', saved.tagIds.join(','));
@@ -296,11 +148,10 @@ export function ArticlesPage() {
           if (saved.dateTo) p.set('date_to', saved.dateTo);
           else p.delete('date_to');
         }
-        if (!hasView) {
-          if (saved.view === 'tiles') p.set('view', 'tiles');
-          else p.delete('view');
-        }
-        p.delete('page');
+        if (saved.view === 'tiles') p.set('view', 'tiles');
+        else if (saved.view === 'feed') p.set('view', 'feed');
+        else p.delete('view');
+        if (needsFilterMerge) p.delete('page');
         return p;
       },
       { replace: true },
@@ -314,7 +165,20 @@ export function ArticlesPage() {
   const page = Math.max(0, Number(search.get('page') ?? '0') || 0);
   const dateFrom = search.get('date_from') ?? '';
   const dateTo = search.get('date_to') ?? '';
+  const searchQ = search.get('q') ?? '';
   const viewMode = parseViewMode(search.get('view'));
+
+  const articleFilterParamsBase = useMemo(
+    () => ({
+      feedIds: feedIds.length > 0 ? feedIds : undefined,
+      tagIds: tagIds.length > 0 ? tagIds : undefined,
+      modifiedOnly,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      q: searchQ.trim() || undefined,
+    }),
+    [feedIds.join(','), tagIds.join(','), modifiedOnly, dateFrom, dateTo, searchQ],
+  );
 
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
@@ -323,6 +187,31 @@ export function ArticlesPage() {
   const [limit, setLimit] = useState(50);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const articlesLoadGenRef = useRef(0);
+
+  type FeedPackState = {
+    items: Article[];
+    total: number;
+    nextFetchPage: number;
+    hasMore: boolean;
+    loading: boolean;
+    loadingMore: boolean;
+    err: string | null;
+  };
+
+  const [feedPack, setFeedPack] = useState<FeedPackState | null>(null);
+  const feedPackRef = useRef<FeedPackState | null>(null);
+  const articleFilterParamsRef = useRef(articleFilterParamsBase);
+  const feedSentinelRef = useRef<HTMLDivElement | null>(null);
+  const feedMoreLock = useRef(false);
+
+  useEffect(() => {
+    feedPackRef.current = feedPack;
+  }, [feedPack]);
+
+  useEffect(() => {
+    articleFilterParamsRef.current = articleFilterParamsBase;
+  }, [articleFilterParamsBase]);
 
   useEffect(() => {
     void listAllFeeds()
@@ -337,34 +226,178 @@ export function ArticlesPage() {
   }, []);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
+    if (viewMode === 'feed') return;
+    const gen = ++articlesLoadGenRef.current;
+    const params = { ...articleFilterParamsBase, page };
+
+    const cached = readArticlesListCache(params);
+    if (cached) {
+      setArticles(cached.articles);
+      setTotal(cached.total);
+      setLimit(cached.limit);
+      setErr(null);
+      setLoading(false);
+    } else {
+      setLoading(true);
+      setErr(null);
+    }
+
     try {
-      const r = await listArticles({
-        feedIds: feedIds.length > 0 ? feedIds : undefined,
-        tagIds: tagIds.length > 0 ? tagIds : undefined,
-        modifiedOnly,
-        page,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
+      const r = await listArticles(params);
+      if (gen !== articlesLoadGenRef.current) return;
+      writeArticlesListCache(params, {
+        articles: r.articles,
+        total: r.total,
+        limit: r.limit,
       });
       setArticles(r.articles);
       setTotal(r.total);
       setLimit(r.limit);
+      setErr(null);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setArticles([]);
-      setTotal(0);
+      if (gen !== articlesLoadGenRef.current) return;
+      if (!cached) {
+        setErr(e instanceof Error ? e.message : String(e));
+        setArticles([]);
+        setTotal(0);
+      }
     } finally {
-      setLoading(false);
+      if (gen === articlesLoadGenRef.current) {
+        setLoading(false);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [feedIds.join(','), tagIds.join(','), modifiedOnly, page, dateFrom, dateTo]);
+  }, [articleFilterParamsBase, page, viewMode]);
 
   useEffect(() => {
     if (!prefsReady) return;
+    if (viewMode === 'feed') return;
     void load();
-  }, [load, prefsReady]);
+  }, [load, prefsReady, viewMode]);
+
+  useEffect(() => {
+    if (viewMode === 'feed') return;
+    setFeedPack(null);
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (!prefsReady || viewMode !== 'feed') return;
+    let cancelled = false;
+    setFeedPack({
+      items: [],
+      total: 0,
+      nextFetchPage: 0,
+      hasMore: false,
+      loading: true,
+      loadingMore: false,
+      err: null,
+    });
+    void listArticles({
+      ...articleFilterParamsBase,
+      page: 0,
+      limit: FEED_SCROLL_BATCH,
+    })
+      .then((r) => {
+        if (cancelled) return;
+        setFeedPack({
+          items: r.articles,
+          total: r.total,
+          nextFetchPage: 1,
+          hasMore:
+            r.articles.length === FEED_SCROLL_BATCH && r.total > r.articles.length,
+          loading: false,
+          loadingMore: false,
+          err: null,
+        });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setFeedPack({
+          items: [],
+          total: 0,
+          nextFetchPage: 0,
+          hasMore: false,
+          loading: false,
+          loadingMore: false,
+          err: e instanceof Error ? e.message : String(e),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [prefsReady, viewMode, articleFilterParamsBase]);
+
+  const fetchNextFeedBatch = useCallback(async () => {
+    if (feedMoreLock.current) return;
+    const snap = feedPackRef.current;
+    if (!snap || snap.loading || snap.loadingMore || !snap.hasMore) return;
+    feedMoreLock.current = true;
+    setFeedPack((p) => (p ? { ...p, loadingMore: true } : p));
+    try {
+      const r = await listArticles({
+        ...articleFilterParamsRef.current,
+        page: snap.nextFetchPage,
+        limit: FEED_SCROLL_BATCH,
+      });
+      if (r.articles.length === 0) {
+        setFeedPack((p) => (p ? { ...p, loadingMore: false, hasMore: false } : p));
+        return;
+      }
+      setFeedPack((p) => {
+        if (!p) return p;
+        const nextItems = [...p.items.slice(FEED_SCROLL_TRIM_PREVIOUS), ...r.articles];
+        const nextFetchPage = p.nextFetchPage + 1;
+        return {
+          ...p,
+          items: nextItems,
+          nextFetchPage,
+          loadingMore: false,
+          hasMore:
+            r.articles.length === FEED_SCROLL_BATCH &&
+            nextFetchPage * FEED_SCROLL_BATCH < p.total,
+          err: null,
+        };
+      });
+    } catch (e) {
+      setFeedPack((p) =>
+        p
+          ? {
+              ...p,
+              loadingMore: false,
+              err: e instanceof Error ? e.message : String(e),
+            }
+          : p,
+      );
+    } finally {
+      feedMoreLock.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== 'feed') return;
+    const el = feedSentinelRef.current;
+    const snap = feedPack;
+    if (!el || !snap || !snap.hasMore || snap.loading) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.some((e) => e.isIntersecting);
+        if (!hit) return;
+        const s = feedPackRef.current;
+        if (!s || s.loadingMore || s.loading || !s.hasMore) return;
+        void fetchNextFeedBatch();
+      },
+      { root: null, rootMargin: '280px', threshold: 0 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [
+    viewMode,
+    fetchNextFeedBatch,
+    feedPack?.hasMore,
+    feedPack?.loading,
+    feedPack?.items.length,
+    feedPack?.loadingMore,
+  ]);
 
   useEffect(() => {
     if (!prefsReady) return;
@@ -406,6 +439,11 @@ export function ArticlesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tagIds.join(',')]);
 
+  const [pendingSearch, setPendingSearch] = useState(searchQ);
+  useEffect(() => {
+    setPendingSearch(searchQ);
+  }, [searchQ]);
+
   const [feedSearch, setFeedSearch] = useState('');
   const [tagSearch, setTagSearch] = useState('');
 
@@ -440,6 +478,9 @@ export function ArticlesPage() {
         else p.delete('date_from');
         if (dt) p.set('date_to', dt);
         else p.delete('date_to');
+        const rawQ = pendingSearch.trim();
+        if (rawQ) p.set('q', rawQ);
+        else p.delete('q');
         p.delete('page');
         return p;
       },
@@ -451,96 +492,29 @@ export function ArticlesPage() {
     clearArticleListPrefs();
     setPendingFeedIds([]);
     setPendingTagIds([]);
+    setPendingSearch('');
     setFiltersOpen(false);
     setSearch(new URLSearchParams(), { replace: true });
   }
 
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
 
-  const rssParams = useMemo(
-    () => ({
-      feedIds: feedIds.map(Number).filter((n) => !isNaN(n)),
-      tagIds: tagIds.map(Number).filter((n) => !isNaN(n)),
-      modifiedOnly,
-      dateFrom: dateFrom || undefined,
-      dateTo: dateTo || undefined,
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [feedIds.join(','), tagIds.join(','), modifiedOnly, dateFrom, dateTo],
-  );
-
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersDrawerRef = useRef<HTMLElement | null>(null);
-  const [aiPromptBusy, setAiPromptBusy] = useState(false);
-  const [aiPromptModalOpen, setAiPromptModalOpen] = useState(false);
-  const [aiPromptText, setAiPromptText] = useState('');
-  const [aiPromptError, setAiPromptError] = useState<string | null>(null);
-  const [aiPromptMeta, setAiPromptMeta] = useState<{ included: number; total: number } | null>(
-    null,
-  );
+
+  useEffect(() => {
+    function onOpen() {
+      setFiltersOpen(true);
+    }
+    window.addEventListener(OPEN_ARTICLES_FILTERS_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_ARTICLES_FILTERS_EVENT, onOpen);
+  }, []);
 
   const feedMap = useMemo(() => {
     const m = new Map<number, string>();
     for (const f of feeds) m.set(f.id, f.title?.trim() || f.url);
     return m;
   }, [feeds]);
-
-  const openAiPromptModal = useCallback(async () => {
-    if (aiPromptBusy) return;
-    setAiPromptBusy(true);
-    setAiPromptError(null);
-    try {
-      const { articles: fetched, total: matchTotal } = await fetchArticlesForAnalysisPrompt(
-        {
-          feedIds: feedIds.length > 0 ? feedIds : undefined,
-          tagIds: tagIds.length > 0 ? tagIds : undefined,
-          modifiedOnly,
-          dateFrom: dateFrom || undefined,
-          dateTo: dateTo || undefined,
-        },
-        MAX_ARTICLES_IN_AI_PROMPT,
-      );
-
-      const filterBlock = describeArticleFiltersForPrompt({
-        feedIds,
-        tagIds,
-        modifiedOnly,
-        dateFrom,
-        dateTo,
-        feeds,
-        tags: allTags,
-      });
-
-      const prompt = buildNewsAnalysisPrompt({
-        articles: fetched,
-        feedTitle: (fid) => feedMap.get(fid),
-        filterBlock,
-        totalMatching: matchTotal,
-        maxIncluded: MAX_ARTICLES_IN_AI_PROMPT,
-      });
-
-      setAiPromptText(prompt);
-      setAiPromptMeta({ included: fetched.length, total: matchTotal });
-      setAiPromptModalOpen(true);
-    } catch (e) {
-      setAiPromptText('');
-      setAiPromptMeta(null);
-      setAiPromptError(e instanceof Error ? e.message : 'Не удалось собрать промпт');
-      setAiPromptModalOpen(true);
-    } finally {
-      setAiPromptBusy(false);
-    }
-  }, [
-    aiPromptBusy,
-    allTags,
-    dateFrom,
-    dateTo,
-    feedIds.join(','),
-    feedMap,
-    feeds,
-    modifiedOnly,
-    tagIds.join(','),
-  ]);
 
   useEffect(() => {
     if (!filtersOpen) return;
@@ -589,7 +563,11 @@ export function ArticlesPage() {
   const feedTagsByFeedId = useMemo(() => {
     const m = new Map<number, Tag[]>();
     for (const f of feeds) {
-      const tags = (f.tags ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+      const raw = f.tags ?? [];
+      const tags =
+        raw.length === 0
+          ? EMPTY_FEED_TAGS
+          : raw.slice().sort((a, b) => a.name.localeCompare(b.name));
       m.set(f.id, tags);
     }
     return m;
@@ -606,33 +584,35 @@ export function ArticlesPage() {
     if (modifiedOnly) bits.push('modified');
     if (dateFrom) bits.push(`from ${dateFrom}`);
     if (dateTo) bits.push(`to ${dateTo}`);
+    const qTrim = searchQ.trim();
+    if (qTrim) bits.push(`search: ${qTrim.length > 40 ? `${qTrim.slice(0, 40)}…` : qTrim}`);
     return bits.length > 0 ? bits.join(' · ') : 'No extra filters';
-  }, [feedIds, tagIds, modifiedOnly, dateFrom, dateTo]);
+  }, [feedIds, tagIds, modifiedOnly, dateFrom, dateTo, searchQ]);
 
   const articlesScreenDigest = useMemo(() => {
-    if (loading) return null;
+    if (viewMode === 'feed') {
+      if (feedPack?.loading) return null;
+    } else if (loading) {
+      return null;
+    }
+    const list = viewMode === 'feed' ? (feedPack?.items ?? []) : articles;
+    const tot = viewMode === 'feed' ? (feedPack?.total ?? 0) : total;
     return formatArticlesListForAi({
-      articles,
+      articles: list,
       feedTitle: (fid) => feedMap.get(fid),
-      filterSummary: `Фильтры: ${activeFilterHint}`,
-      page,
-      limit,
-      total,
+      filterSummary: `Фильтры: ${activeFilterHint}${
+        viewMode === 'feed' ? ' · режим ленты (полный текст, скользящее окно)' : ''
+      }`,
+      page: viewMode === 'feed' ? 0 : page,
+      limit: viewMode === 'feed' ? FEED_SCROLL_BATCH : limit,
+      total: tot,
     });
-  }, [loading, articles, feedMap, activeFilterHint, page, limit, total]);
+  }, [loading, viewMode, feedPack, articles, feedMap, activeFilterHint, page, limit, total]);
 
   useAiScreenSection('articles', articlesScreenDigest);
 
   return (
     <>
-      <AiPromptModal
-        open={aiPromptModalOpen}
-        onClose={() => setAiPromptModalOpen(false)}
-        promptText={aiPromptText}
-        error={aiPromptError}
-        meta={aiPromptMeta}
-        articlesCap={MAX_ARTICLES_IN_AI_PROMPT}
-      />
       {err ? <p className="err">{err}</p> : null}
 
       <button
@@ -678,7 +658,7 @@ export function ArticlesPage() {
                   className="filters filters-panel-form"
                   onSubmit={onApplyFilters}
                   ref={formRef}
-                  key={`${feedIds.join(',')}-${tagIds.join(',')}-${modifiedOnly}-${dateFrom}-${dateTo}`}
+                  key={`${feedIds.join(',')}-${tagIds.join(',')}-${modifiedOnly}-${dateFrom}-${dateTo}-${searchQ}`}
                 >
                   <section className="filters-panel-section" aria-labelledby="filters-feeds-heading">
                     <div className="filters-panel-head">
@@ -811,6 +791,18 @@ export function ArticlesPage() {
                   </section>
 
                   <section className="filters-panel-section filters-panel-section--compact">
+                    <input
+                      type="search"
+                      className="filters-panel-search"
+                      placeholder='Подстроки через пробел или запятую; фраза в "двойных кавычках"…'
+                      value={pendingSearch}
+                      onChange={(e) => setPendingSearch(e.target.value)}
+                      aria-label="Поиск по заголовку и тексту статьи"
+                      autoComplete="off"
+                    />
+                  </section>
+
+                  <section className="filters-panel-section filters-panel-section--compact">
                     <h3 className="filters-panel-label">Date &amp; updates</h3>
                     <div className="filters-panel-dates">
                       <label className="filters-panel-date-field">
@@ -846,27 +838,6 @@ export function ArticlesPage() {
                       Сбросить
                     </button>
                   </div>
-
-                  <div className="articles-filters-export-row">
-                    <a
-                      className="btn-rss-export"
-                      href={feedRssPath(rssParams)}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="Export filtered articles as RSS 2.0 feed"
-                    >
-                      RSS Export
-                    </a>
-                    <button
-                      type="button"
-                      className="btn-ai-prompt"
-                      disabled={loading || aiPromptBusy}
-                      title="Собрать промпт для ИИ по применённым фильтрам (до 120 статей) и открыть в окне"
-                      onClick={() => void openAiPromptModal()}
-                    >
-                      {aiPromptBusy ? 'Сборка…' : 'Промпт для ИИ'}
-                    </button>
-                  </div>
                 </form>
               </div>
             </div>
@@ -878,7 +849,18 @@ export function ArticlesPage() {
         <div className="card-head">
           <h2 className="card-title">Articles</h2>
           <div className="article-list-toolbar">
-            {!loading ? <span className="muted small">{total} total</span> : null}
+            {(() => {
+              const feedLoading = viewMode === 'feed' && (!feedPack || feedPack.loading);
+              const listLoading = viewMode !== 'feed' && loading;
+              if (feedLoading || listLoading) return null;
+              return (
+                <span className="muted small">
+                  {viewMode === 'feed' && feedPack
+                    ? `${feedPack.total} total · в окне ${feedPack.items.length}`
+                    : `${total} total`}
+                </span>
+              );
+            })()}
             <div className="article-view-toggle" role="group" aria-label="Article layout">
               <button
                 type="button"
@@ -896,10 +878,61 @@ export function ArticlesPage() {
               >
                 Tiles
               </button>
+              <button
+                type="button"
+                className={viewMode === 'feed' ? 'is-active' : ''}
+                onClick={() =>
+                  setSearch(
+                    (prev) => {
+                      const p = new URLSearchParams(prev);
+                      p.set('view', 'feed');
+                      p.delete('page');
+                      return p;
+                    },
+                    { replace: true },
+                  )
+                }
+                aria-pressed={viewMode === 'feed'}
+                title="Полный текст подряд; по 5 записей, при прокрутке подгружаются следующие 5, из памяти убираются предыдущие 4"
+              >
+                Feed
+              </button>
             </div>
           </div>
         </div>
-        {loading ? (
+        {viewMode === 'feed' && feedPack?.err ? <p className="err article-feed-err">{feedPack.err}</p> : null}
+        {viewMode === 'feed' && (!feedPack || feedPack.loading) ? (
+          <p className="muted">Loading…</p>
+        ) : viewMode === 'feed' && feedPack ? (
+          <>
+            <div className="article-feed-scroll" role="feed" aria-busy={feedPack.loadingMore}>
+              {feedPack.items.length === 0 ? (
+                <p className="muted article-feed-empty">No articles match the current filters.</p>
+              ) : (
+                feedPack.items.map((a) => (
+                  <ArticleFeedCard
+                    key={a.id}
+                    article={a}
+                    feedName={feedMap.get(a.feed_id)}
+                    feedTags={feedTagsByFeedId.get(a.feed_id) ?? EMPTY_FEED_TAGS}
+                  />
+                ))
+              )}
+              {feedPack.hasMore ? (
+                <div
+                  ref={feedSentinelRef}
+                  className="article-feed-sentinel"
+                  aria-hidden
+                />
+              ) : feedPack.items.length > 0 ? (
+                <p className="muted small article-feed-end">Конец списка</p>
+              ) : null}
+              {feedPack.loadingMore ? (
+                <p className="muted small article-feed-loading-more">Подгрузка…</p>
+              ) : null}
+            </div>
+          </>
+        ) : loading ? (
           <p className="muted">Loading…</p>
         ) : (
           <>
@@ -913,7 +946,7 @@ export function ArticlesPage() {
                       key={a.id}
                       article={a}
                       feedName={feedMap.get(a.feed_id)}
-                      feedTags={feedTagsByFeedId.get(a.feed_id) ?? []}
+                      feedTags={feedTagsByFeedId.get(a.feed_id) ?? EMPTY_FEED_TAGS}
                     />
                   ))
                 )}
@@ -928,7 +961,7 @@ export function ArticlesPage() {
                       key={a.id}
                       article={a}
                       feedName={feedMap.get(a.feed_id)}
-                      feedTags={feedTagsByFeedId.get(a.feed_id) ?? []}
+                      feedTags={feedTagsByFeedId.get(a.feed_id) ?? EMPTY_FEED_TAGS}
                     />
                   ))
                 )}
@@ -950,7 +983,7 @@ export function ArticlesPage() {
   );
 }
 
-function ArticleVersionPill({ count }: { count: number }) {
+const ArticleVersionPill = memo(function ArticleVersionPill({ count }: { count: number }) {
   if (count <= 1) return null;
   return (
     <span
@@ -967,9 +1000,74 @@ function ArticleVersionPill({ count }: { count: number }) {
       <span className="article-version-pill__n">{count}</span>
     </span>
   );
-}
+});
 
-function ArticleTileCover({ src }: { src: string | null }) {
+const ArticleFeedCard = memo(function ArticleFeedCard({
+  article: a,
+  feedName,
+  feedTags,
+}: {
+  article: Article;
+  feedName?: string;
+  feedTags: Tag[];
+}) {
+  const published = formatDateTime(a.published_at ?? undefined);
+  const fetched = formatDateTime(a.last_fetched_at);
+  const rx = a.telegram_reactions ?? [];
+  const tagAccent = feedTags[0]?.color ?? DEFAULT_TAG_COLOR;
+  const full = isFullPageArchiveBody(a.body);
+
+  return (
+    <article
+      className={
+        'article-feed-card' + (feedTags.length > 0 ? ' article-feed-card--tagged' : '')
+      }
+      style={
+        feedTags.length > 0
+          ? ({ ['--feed-tag-accent' as string]: tagAccent } as CSSProperties)
+          : undefined
+      }
+    >
+      <header className="article-feed-card-head">
+        <h3 className="article-feed-card-title">
+          <Link to={`/articles/${a.id}`}>{a.title || '(no title)'}</Link>
+        </h3>
+        <ArticleVersionPill count={a.content_version_count} />
+      </header>
+      {feedName ? (
+        <p className="article-feed-card-source small muted">
+          <span className="article-feed-card-source__label">Source</span>{' '}
+          <span className="article-feed-card-source__name">{feedName}</span>
+        </p>
+      ) : null}
+      <ArticleTagChips tags={feedTags} className="feed-card-tag-chips article-feed-card-tags" />
+      {rx.length > 0 ? (
+        <div className="article-feed-card-reactions">
+          <TelegramReactionsStrip articleId={a.id} reactions={rx} />
+        </div>
+      ) : null}
+      <div className="meta article-feed-card-meta small">
+        <span title={published.title}>{published.display}</span>
+        <span title={fetched.title}>Fetched {fetched.display}</span>
+      </div>
+      <div className="article-feed-card-body-wrap">
+        {full ? (
+          <p className="muted small">
+            Полный HTML-архив страницы —{' '}
+            <Link to={`/articles/${a.id}`}>открыть на отдельной странице</Link>.
+          </p>
+        ) : (
+          <div
+            className="body article-feed-card-body"
+            dangerouslySetInnerHTML={{ __html: sanitizeArticleBodyHtml(a.body) }}
+          />
+        )}
+      </div>
+    </article>
+  );
+});
+
+const ArticleTileCover = memo(function ArticleTileCover({ src }: { src: string | null }) {
   const [broken, setBroken] = useState(false);
   const showImg = src && !broken;
   if (!showImg) {
@@ -996,9 +1094,9 @@ function ArticleTileCover({ src }: { src: string | null }) {
       onError={() => setBroken(true)}
     />
   );
-}
+});
 
-function ArticleTile({
+const ArticleTile = memo(function ArticleTile({
   article: a,
   feedName,
   feedTags,
@@ -1051,9 +1149,9 @@ function ArticleTile({
       </div>
     </article>
   );
-}
+});
 
-function ArticleRow({
+const ArticleRow = memo(function ArticleRow({
   article: a,
   feedName,
   feedTags,
@@ -1100,9 +1198,9 @@ function ArticleRow({
       </div>
     </li>
   );
-}
+});
 
-function ArticleTagChips({
+const ArticleTagChips = memo(function ArticleTagChips({
   tags,
   className,
 }: {
@@ -1127,4 +1225,4 @@ function ArticleTagChips({
       ))}
     </div>
   );
-}
+});

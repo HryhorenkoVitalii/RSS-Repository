@@ -1,4 +1,3 @@
-import DOMPurify from 'dompurify';
 import {
   useCallback,
   useEffect,
@@ -23,6 +22,7 @@ import { NotFoundPage } from './NotFoundPage';
 import { TelegramReactionsStrip } from '../TelegramReactionsStrip';
 import { formatDateTime, formatDateTimeCompact } from '../formatTime';
 import { markChangedBlocks } from '../articleBlockMarkers';
+import { sanitizeArticleBodyHtml } from '../articleHtmlSanitize';
 import {
   htmlToPlainText,
   inlineWordDiffHtml,
@@ -196,32 +196,6 @@ export function ArticlePage() {
     </>
   );
 }
-
-/** YouTube MRSS often embeds googlevideo URLs in &lt;video&gt;; they never play natively (legacy bodies in DB). */
-function stripGooglevideoVideoTags(html: string): string {
-  if (!html.includes('googlevideo')) return html;
-  try {
-    const tpl = document.createElement('template');
-    tpl.innerHTML = html;
-    tpl.content.querySelectorAll('video').forEach((el) => {
-      const v = el as HTMLVideoElement;
-      const direct = (v.getAttribute('src') || '').toLowerCase().includes('googlevideo.com');
-      const fromSource = Array.from(v.querySelectorAll('source')).some((s) =>
-        (s.getAttribute('src') || '').toLowerCase().includes('googlevideo.com'),
-      );
-      if (direct || fromSource) v.remove();
-    });
-    return tpl.innerHTML;
-  } catch {
-    return html;
-  }
-}
-
-const domPurifyArticle = (html: string) =>
-  DOMPurify.sanitize(stripGooglevideoVideoTags(html), {
-    ADD_TAGS: ['video', 'source', 'audio', 'iframe'],
-    ADD_ATTR: ['controls', 'preload', 'src', 'type', 'style', 'alt', 'poster', 'allowfullscreen'],
-  });
 
 function ArchiveIframePreview({
   articleId,
@@ -477,7 +451,7 @@ function LatestArticleBody({
     if (prev != null && !prevFull) {
       sourceHtml = markChangedBlocks(prev.body, latest.body);
     }
-    bodyHtml = domPurifyArticle(sourceHtml);
+    bodyHtml = sanitizeArticleBodyHtml(sourceHtml);
   }
 
   const archiveNote =
@@ -506,7 +480,7 @@ function LatestArticleBody({
       ) : prev != null && (prevFull || currFull) ? (
         <div
           className="body"
-          dangerouslySetInnerHTML={{ __html: domPurifyArticle(latest.body) }}
+          dangerouslySetInnerHTML={{ __html: sanitizeArticleBodyHtml(latest.body) }}
         />
       ) : (
         <div

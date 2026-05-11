@@ -1,9 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useCombinedAiScreenContext } from './aiScreenContext';
-import { openRouterChatCompletion, type OpenRouterChatMessage } from './openRouterClient';
-import { getOpenRouterApiKey, getOpenRouterModel, isOpenRouterConfigured } from './openRouterPrefs';
+import { useOpenFilteredArticlesPrompt } from './FilteredArticlesPrompt';
 
 function SparklesIcon({ className }: { className?: string }) {
   return (
@@ -31,31 +29,11 @@ type ChatMsg = {
   text: string;
 };
 
-const WELCOME_LOCAL =
-  'Привет! Это чат ассистента по лентам и статьям. В настройках не задан ключ OpenRouter — ответы сейчас локальные заглушки, история только в этой вкладке.';
-
-const WELCOME_OPENROUTER =
-  'Привет! В настройках задан OpenRouter: сообщения уходят в выбранную модель через openrouter.ai. История чата по-прежнему только в браузере.';
+const WELCOME =
+  'Привет! Ответы в этом окне — локальные заглушки, в сеть ничего не уходит. Чтобы получить текст для внешнего ИИ по **фильтрам списка статей** (до 100 последних записей), нажмите «Промпт для ИИ» в шапке или «Промпт по фильтрам» здесь — откроется окно с текстом. История чата только в этой вкладке.';
 
 const STUB_REPLY =
-  'Ключ OpenRouter не задан. Это заглушка: сообщение никуда не уходит. Добавьте ключ в настройках (шестерёнка).';
-
-const ASSISTANT_SYSTEM_BASE =
-  'Ты полезный ассистент в приложении RSS-агрегаторе. Отвечай по делу, на языке пользователя. Ниже может быть блок с материалами с открытых экранов приложения — опирайся на него, если вопрос про эти ленты или статьи; иначе отвечай как обычный чат.';
-
-/** Ограничение длины вложенного контекста экрана (символы), чтобы не раздувать запрос. */
-const SCREEN_CONTEXT_MAX_CHARS = 28000;
-
-function clipScreenContext(raw: string): string {
-  const t = raw.trim();
-  if (!t) return '';
-  if (t.length <= SCREEN_CONTEXT_MAX_CHARS) return t;
-  return `${t.slice(0, SCREEN_CONTEXT_MAX_CHARS)}\n\n[…фрагмент контекста экрана обрезан]`;
-}
-
-function welcomeText(): string {
-  return isOpenRouterConfigured() ? WELCOME_OPENROUTER : WELCOME_LOCAL;
-}
+  'Сообщения из этого окна никуда не отправляются. Откройте промпт по фильтрам кнопкой выше или «Промпт для ИИ» в шапке.';
 
 function newMsgId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -72,46 +50,21 @@ type Props = {
 export function AiAssistantFab({ fabVisible, onFabDismiss }: Props) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([
-    { id: 'welcome', role: 'assistant', text: welcomeText() },
+    { id: 'welcome', role: 'assistant', text: WELCOME },
   ]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
-  const [openRouterOn, setOpenRouterOn] = useState(() => isOpenRouterConfigured());
+  const openFilteredPrompt = useOpenFilteredArticlesPrompt();
   const listEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const reduceMotion = useReducedMotion() === true;
   const titleId = useId();
   const inputId = useId();
   const replyTimerRef = useRef<number | null>(null);
-  const abortChatRef = useRef<AbortController | null>(null);
-  const combinedScreenContext = useCombinedAiScreenContext();
 
   useEffect(() => {
     if (!fabVisible) setOpen(false);
   }, [fabVisible]);
-
-  useEffect(() => {
-    function onPrefs() {
-      setOpenRouterOn(isOpenRouterConfigured());
-      setMessages((prev) => {
-        if (prev.length === 1 && prev[0].id === 'welcome') {
-          return [{ id: 'welcome', role: 'assistant', text: welcomeText() }];
-        }
-        return prev;
-      });
-    }
-    window.addEventListener('rss-prefs-changed', onPrefs);
-    return () => window.removeEventListener('rss-prefs-changed', onPrefs);
-  }, []);
-
-  useEffect(() => {
-    if (!open) {
-      abortChatRef.current?.abort();
-      abortChatRef.current = null;
-      return;
-    }
-    setOpenRouterOn(isOpenRouterConfigured());
-  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -160,49 +113,13 @@ export function AiAssistantFab({ fabVisible, onFabDismiss }: Props) {
     if (replyTimerRef.current != null) window.clearTimeout(replyTimerRef.current);
     replyTimerRef.current = null;
 
-    const apiKey = getOpenRouterApiKey();
-    if (!apiKey) {
-      replyTimerRef.current = window.setTimeout(() => {
-        replyTimerRef.current = null;
-        setMessages((m) => [...m, { id: newMsgId(), role: 'assistant', text: STUB_REPLY }]);
-      }, 420);
-      return;
-    }
-
-    abortChatRef.current?.abort();
-    const ac = new AbortController();
-    abortChatRef.current = ac;
     setSending(true);
-    const model = getOpenRouterModel();
-    const screenBlock = combinedScreenContext.trim()
-      ? `\n\n### Данные с экрана (RSS / статьи в интерфейсе)\n${clipScreenContext(combinedScreenContext)}`
-      : '';
-    const systemMessage: OpenRouterChatMessage = {
-      role: 'system',
-      content: ASSISTANT_SYSTEM_BASE + screenBlock,
-    };
-    const apiMessages: OpenRouterChatMessage[] = [
-      systemMessage,
-      ...historySnapshot.map(({ role, text }) => ({ role, content: text })),
-    ];
-    try {
-      const answer = await openRouterChatCompletion({
-        apiKey,
-        model,
-        messages: apiMessages,
-        signal: ac.signal,
-      });
-      if (ac.signal.aborted) return;
-      setMessages((m) => [...m, { id: newMsgId(), role: 'assistant', text: answer }]);
-    } catch (e) {
-      if (ac.signal.aborted) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      setMessages((m) => [...m, { id: newMsgId(), role: 'assistant', text: `Ошибка: ${msg}` }]);
-    } finally {
-      if (abortChatRef.current === ac) abortChatRef.current = null;
+    replyTimerRef.current = window.setTimeout(() => {
+      replyTimerRef.current = null;
       setSending(false);
-    }
-  }, [draft, sending, messages, combinedScreenContext]);
+      setMessages((m) => [...m, { id: newMsgId(), role: 'assistant', text: STUB_REPLY }]);
+    }, 280);
+  }, [draft, sending, messages]);
 
   const ease = [0.4, 0, 0.2, 1] as const;
 
@@ -285,81 +202,90 @@ export function AiAssistantFab({ fabVisible, onFabDismiss }: Props) {
                     exit={windowMotion.exit}
                     onClick={(e) => e.stopPropagation()}
                   >
-                  <header className="ai-assistant-messenger-head">
-                    <div className="ai-assistant-messenger-head-main">
-                      <span className="ai-assistant-messenger-avatar" aria-hidden>
-                        <SparklesIcon className="ai-assistant-messenger-avatar-icon" />
-                      </span>
-                      <div>
-                        <h2 id={titleId} className="ai-assistant-messenger-title">
-                          ИИ‑ассистент
-                        </h2>
-                        <p className="ai-assistant-messenger-subtitle muted small">
-                          {openRouterOn ? 'OpenRouter · из браузера' : 'Локально · без ключа OpenRouter'}
-                        </p>
+                    <header className="ai-assistant-messenger-head">
+                      <div className="ai-assistant-messenger-head-main">
+                        <span className="ai-assistant-messenger-avatar" aria-hidden>
+                          <SparklesIcon className="ai-assistant-messenger-avatar-icon" />
+                        </span>
+                        <div>
+                          <h2 id={titleId} className="ai-assistant-messenger-title">
+                            ИИ‑ассистент
+                          </h2>
+                          <p className="ai-assistant-messenger-subtitle muted small">
+                            Локально · промпт по фильтрам списка — в шапке или кнопка справа
+                          </p>
+                        </div>
                       </div>
+                      <div className="ai-assistant-messenger-head-actions">
+                        <button
+                          type="button"
+                          className="btn-secondary btn-compact"
+                          onClick={() => openFilteredPrompt()}
+                        >
+                          Промпт по фильтрам
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-compact ai-assistant-messenger-close"
+                          onClick={() => setOpen(false)}
+                          aria-label="Закрыть"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </header>
+
+                    <div
+                      className="ai-assistant-messenger-thread"
+                      role="log"
+                      aria-live="polite"
+                      aria-relevant="additions"
+                    >
+                      {messages.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`ai-assistant-messenger-row ai-assistant-messenger-row--${msg.role}`}
+                        >
+                          <div className="ai-assistant-messenger-bubble">{msg.text}</div>
+                        </div>
+                      ))}
+                      <div ref={listEndRef} className="ai-assistant-messenger-thread-end" aria-hidden />
                     </div>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-compact ai-assistant-messenger-close"
-                      onClick={() => setOpen(false)}
-                      aria-label="Закрыть"
-                    >
-                      ✕
-                    </button>
-                  </header>
 
-                  <div
-                    className="ai-assistant-messenger-thread"
-                    role="log"
-                    aria-live="polite"
-                    aria-relevant="additions"
-                  >
-                    {messages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className={`ai-assistant-messenger-row ai-assistant-messenger-row--${msg.role}`}
-                      >
-                        <div className="ai-assistant-messenger-bubble">{msg.text}</div>
-                      </div>
-                    ))}
-                    <div ref={listEndRef} className="ai-assistant-messenger-thread-end" aria-hidden />
-                  </div>
-
-                  <form
-                    className="ai-assistant-messenger-composer"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      send();
-                    }}
-                  >
-                    <label htmlFor={inputId} className="visually-hidden">
-                      Сообщение
-                    </label>
-                    <textarea
-                      id={inputId}
-                      ref={textareaRef}
-                      className="ai-assistant-messenger-input"
-                      rows={2}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          send();
-                        }
+                    <form
+                      className="ai-assistant-messenger-composer"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        send();
                       }}
-                      placeholder="Напишите сообщение… (Enter — отправить, Shift+Enter — новая строка)"
-                      maxLength={8000}
-                    />
-                    <button
-                      type="submit"
-                      className="btn-primary ai-assistant-messenger-send"
-                      disabled={!draft.trim() || sending}
                     >
-                      {sending ? '…' : 'Отправить'}
-                    </button>
-                  </form>
+                      <label htmlFor={inputId} className="visually-hidden">
+                        Сообщение
+                      </label>
+                      <textarea
+                        id={inputId}
+                        ref={textareaRef}
+                        className="ai-assistant-messenger-input"
+                        rows={2}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            send();
+                          }
+                        }}
+                        placeholder="Напишите сообщение… (Enter — отправить, Shift+Enter — новая строка)"
+                        maxLength={8000}
+                      />
+                      <button
+                        type="submit"
+                        className="btn-primary ai-assistant-messenger-send"
+                        disabled={!draft.trim() || sending}
+                      >
+                        {sending ? '…' : 'Отправить'}
+                      </button>
+                    </form>
                   </motion.div>
                 </motion.div>
               </>

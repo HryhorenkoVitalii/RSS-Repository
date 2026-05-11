@@ -1,13 +1,34 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
+import {
+  articleListHasAppliedFiltersFromSearch,
+  OPEN_ARTICLES_FILTERS_EVENT,
+} from './articlesFilterUi';
+import { AiHeaderPromptButton } from './AiHeaderPromptButton';
 import { AiScreenContextProvider } from './aiScreenContext';
+import { FilteredArticlesPromptProvider } from './FilteredArticlesPrompt';
 import { getAiAssistantFabVisible, setAiAssistantFabVisible } from './aiAssistantPrefs';
 import { AiAssistantFab } from './AiAssistantFab';
-import { FeedsPage } from './pages/FeedsPage';
 import { PollProvider } from './PollContext';
 import { SettingsMenu } from './SettingsMenu';
 import { Toasts } from './Toasts';
+
+const FeedsPage = lazy(() =>
+  import('./pages/FeedsPage').then((m) => ({ default: m.FeedsPage })),
+);
+
+function prefetchFeedsPage() {
+  void import('./pages/FeedsPage');
+}
 
 /**
  * Старый экран не гаснет по opacity (остаётся 1), новый наезжает сверху с 0→1.
@@ -36,6 +57,10 @@ function routeVariants(reduceMotion: boolean, touchUi: boolean) {
 
 export function Layout() {
   const [feedsOpen, setFeedsOpen] = useState(false);
+  const openFeedsModal = useCallback(() => {
+    prefetchFeedsPage();
+    setFeedsOpen(true);
+  }, []);
   const [aiAssistantFabVisible, setAiAssistantFabVisibleState] = useState(getAiAssistantFabVisible);
   const location = useLocation();
   const reduceMotion = useReducedMotion() === true;
@@ -54,6 +79,13 @@ export function Layout() {
   const year = new Date().getFullYear();
   const articlesNavActive =
     location.pathname === '/' || location.pathname.startsWith('/articles');
+  const articleListFiltersActive = useMemo(
+    () =>
+      location.pathname === '/' &&
+      articleListHasAppliedFiltersFromSearch(location.search),
+    [location.pathname, location.search],
+  );
+  const showArticlesFiltersNav = location.pathname === '/';
 
   useLayoutEffect(() => {
     window.scrollTo(0, 0);
@@ -76,6 +108,7 @@ export function Layout() {
   return (
     <PollProvider>
       <AiScreenContextProvider>
+      <FilteredArticlesPromptProvider>
       <div className="app-shell">
         <header className="header">
           <h1>
@@ -104,21 +137,30 @@ export function Layout() {
             >
               Articles
             </Link>
-            <button
-              type="button"
-              className="nav-link nav-link--button"
-              onClick={() => setFeedsOpen(true)}
-              aria-expanded={feedsOpen}
-              aria-controls="feeds-modal-panel"
-            >
-              Feeds
-            </button>
+            {showArticlesFiltersNav ? (
+              <button
+                type="button"
+                className={`nav-link nav-link--button header-nav-filters-mobile${
+                  articleListFiltersActive ? ' active' : ''
+                }`}
+                aria-haspopup="dialog"
+                title="Article list filters"
+                onClick={() => {
+                  setFeedsOpen(false);
+                  window.dispatchEvent(new Event(OPEN_ARTICLES_FILTERS_EVENT));
+                }}
+              >
+                Filters
+              </button>
+            ) : null}
+            <AiHeaderPromptButton />
             <SettingsMenu
               aiAssistantFabVisible={aiAssistantFabVisible}
               onAiAssistantFabVisibleChange={(visible) => {
                 setAiAssistantFabVisible(visible);
                 setAiAssistantFabVisibleState(visible);
               }}
+              onOpenFeeds={openFeedsModal}
             />
           </nav>
         </header>
@@ -184,7 +226,9 @@ export function Layout() {
               </button>
             </div>
             <div className="feeds-modal-body">
-              <FeedsPage onNavigateToArticles={() => setFeedsOpen(false)} />
+              <Suspense fallback={<p className="muted">Loading…</p>}>
+                <FeedsPage onNavigateToArticles={() => setFeedsOpen(false)} />
+              </Suspense>
             </div>
           </div>
         </div>
@@ -197,6 +241,7 @@ export function Layout() {
         }}
       />
       <Toasts />
+      </FilteredArticlesPromptProvider>
       </AiScreenContextProvider>
     </PollProvider>
   );

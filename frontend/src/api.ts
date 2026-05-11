@@ -466,8 +466,12 @@ export type ListArticlesParams = {
   tagIds?: string[];
   modifiedOnly?: boolean;
   page?: number;
+  /** 1–100; omit for server default (50). */
+  limit?: number;
   dateFrom?: string;
   dateTo?: string;
+  /** Words (AND) or whole phrase in double quotes — latest title/body. */
+  q?: string;
 };
 
 export async function listArticles(
@@ -481,8 +485,11 @@ export async function listArticles(
   if (params.modifiedOnly) q.set('modified_only', 'true');
   if (params.page != null && params.page > 0)
     q.set('page', String(params.page));
+  if (params.limit != null && params.limit > 0)
+    q.set('limit', String(params.limit));
   if (params.dateFrom) q.set('date_from', params.dateFrom);
   if (params.dateTo) q.set('date_to', params.dateTo);
+  if (params.q?.trim()) q.set('q', params.q.trim());
   const qs = q.toString();
   const path = qs ? `/articles?${qs}` : '/articles';
   const raw = await apiGet<unknown>(path);

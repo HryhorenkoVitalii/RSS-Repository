@@ -5,6 +5,8 @@ export type RssExportParams = {
   modifiedOnly?: boolean;
   dateFrom?: string;
   dateTo?: string;
+  /** Same rules as article list search (`/api/articles?q=`). */
+  q?: string;
 };
 
 export function feedRssPath(params: RssExportParams): string {
@@ -18,6 +20,7 @@ export function feedRssPath(params: RssExportParams): string {
   if (params.modifiedOnly) q.set('modified_only', 'true');
   if (params.dateFrom) q.set('date_from', params.dateFrom);
   if (params.dateTo) q.set('date_to', params.dateTo);
+  if (params.q?.trim()) q.set('q', params.q.trim());
   q.set('refresh', 'false');
   const qs = q.toString();
   return qs ? `/feed.xml?${qs}` : '/feed.xml';

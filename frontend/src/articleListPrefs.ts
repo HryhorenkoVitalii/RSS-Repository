@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'rss_repo_articles_list_v1';
 
-export type ArticleViewModePref = 'list' | 'tiles';
+export type ArticleViewModePref = 'list' | 'tiles' | 'feed';
 
 export type ArticleListPrefs = {
   feedIds: string[];
@@ -33,7 +33,8 @@ export function loadArticleListPrefs(): ArticleListPrefs | null {
       modifiedOnly: typeof o.modifiedOnly === 'boolean' ? o.modifiedOnly : d.modifiedOnly,
       dateFrom: typeof o.dateFrom === 'string' ? o.dateFrom : d.dateFrom,
       dateTo: typeof o.dateTo === 'string' ? o.dateTo : d.dateTo,
-      view: o.view === 'tiles' ? 'tiles' : 'list',
+      view:
+        o.view === 'tiles' ? 'tiles' : o.view === 'feed' ? 'feed' : 'list',
     };
   } catch {
     return null;

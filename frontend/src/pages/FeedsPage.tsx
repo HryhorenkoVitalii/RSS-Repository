@@ -26,13 +26,14 @@ import {
   singleFeedRssAbsoluteUrl,
   singleFeedRssPath,
 } from '../feedRss';
+import { isYoutubeChannelFeedUrl, normalizeYouTubeChannelFeedUrl } from '../youtubeChannelFeedUrl';
 import { IntervalSelect, snapToNearestPreset } from '../IntervalSelect';
 import { PaginationBar } from '../PaginationBar';
 import { runTracked } from '../runTracked';
 import { pickTagChipTextColor } from '../tagChipText';
 import { usePoll, type PollStatus } from '../PollContext';
 
-type FeedSourceKind = 'rss' | 'telegram';
+type FeedSourceKind = 'rss' | 'telegram' | 'youtube';
 
 const TELEGRAM_POSTS_MAX = 500;
 
@@ -44,6 +45,9 @@ function clampTelegramMaxItems(n: number): number {
 function buildFeedUrl(raw: string, source: FeedSourceKind): string {
   const s = raw.trim();
   if (!s) return '';
+  if (source === 'youtube') {
+    return normalizeYouTubeChannelFeedUrl(s) ?? '';
+  }
   if (source === 'rss') {
     if (!/^https?:\/\//i.test(s)) return `https://${s}`;
     return s;
@@ -182,17 +186,30 @@ export function FeedsPage({ onNavigateToArticles }: FeedsPageProps) {
     }
   }, [data, setFeedNames]);
 
-  // Reload feed list when a poll completes
+  /** Stable across `data` refetches so we do not re-fire when only `last_polled_at` etc. changed. */
+  const feedIdsOnPageKey = useMemo(
+    () => (data?.feeds ?? []).map((f) => f.id).join(','),
+    [data],
+  );
+
+  // Reload feed list after poll(s) finish — debounced so poll-all / SSE bursts hit the API once.
   useEffect(() => {
-    const feedIds = data?.feeds.map((f) => f.id) ?? [];
-    const hasFinished = feedIds.some((id) => {
+    if (!feedIdsOnPageKey) return;
+    const ids = feedIdsOnPageKey
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const hasFinished = ids.some((id) => {
       const s = pollStatuses[id];
       return s === 'success' || s === 'error';
     });
-    if (hasFinished) {
+    if (!hasFinished) return;
+
+    const t = window.setTimeout(() => {
       void load();
-    }
-  }, [pollStatuses, data, load]);
+    }, 500);
+    return () => window.clearTimeout(t);
+  }, [pollStatuses, feedIdsOnPageKey, load]);
 
   const totalPages =
     data && data.limit > 0 ? Math.ceil(data.total / data.limit) : 1;
@@ -212,7 +229,14 @@ export function FeedsPage({ onNavigateToArticles }: FeedsPageProps) {
   function onAdd(e: React.FormEvent) {
     e.preventDefault();
     const url = buildFeedUrl(newUrl, feedSource);
-    if (!url) return;
+    if (!url) {
+      if (feedSource === 'youtube') {
+        setErr(
+          'YouTube: укажите ссылку вида https://www.youtube.com/channel/UC… , готовый URL …/feeds/videos.xml?channel_id=UC… или сам ID канала (UC…). Ссылки @ник или /c/Имя сюда не подходят — откройте «О канале» и скопируйте ID или полный URL канала.',
+        );
+      }
+      return;
+    }
     void runTracked(setBusy, setErr, async () => {
       await createFeed({
         url,
@@ -321,15 +345,23 @@ export function FeedsPage({ onNavigateToArticles }: FeedsPageProps) {
             Source
             <select
               value={feedSource}
-              onChange={(e) => setFeedSource(e.target.value as FeedSourceKind)}
+              onChange={(e) => {
+                setFeedSource(e.target.value as FeedSourceKind);
+                setErr(null);
+              }}
               aria-label="Feed source type"
             >
               <option value="rss">RSS / Atom (URL)</option>
+              <option value="youtube">YouTube (channel)</option>
               <option value="telegram">Telegram (public channel)</option>
             </select>
           </label>
           <label>
-            {feedSource === 'rss' ? 'Feed URL' : 'Channel'}
+            {feedSource === 'rss'
+              ? 'Feed URL'
+              : feedSource === 'youtube'
+                ? 'Channel URL or ID'
+                : 'Channel'}
             <input
               type="text"
               value={newUrl}
@@ -337,7 +369,9 @@ export function FeedsPage({ onNavigateToArticles }: FeedsPageProps) {
               placeholder={
                 feedSource === 'rss'
                   ? 'https://example.com/rss'
-                  : '@channel or t.me/channel'
+                  : feedSource === 'youtube'
+                    ? 'https://www.youtube.com/channel/UC… или UC…'
+                    : '@channel or t.me/channel'
               }
               required
             />
@@ -512,6 +546,7 @@ function FeedCard({
   );
   const tgSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTelegram = isTelegramFeedUrl(feed.url);
+  const isYoutube = isYoutubeChannelFeedUrl(feed.url);
   useEffect(() => {
     setSec(snapToNearestPreset(feed.poll_interval_seconds));
   }, [feed.id, feed.poll_interval_seconds]);
@@ -603,6 +638,9 @@ function FeedCard({
           <div className="feed-card-info">
             {title && <div className="feed-card-title" title={title}>{title}</div>}
             <div className="feed-card-url" title={feed.url}>{feed.url}</div>
+            {isYoutube ? (
+              <div className="muted small feed-card-youtube-hint">YouTube · Atom feed</div>
+            ) : null}
           </div>
         </Link>
         {statusIndicator}
